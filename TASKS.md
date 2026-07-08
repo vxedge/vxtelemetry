@@ -20,4 +20,5 @@
 
 - [ ] Kuksa/VSS databroker integration: subscribe + persist vehicle signals per vehicle
       manifest `signal_plane` block
+- [ ] CAN→VSS ingestion via Kuksa CAN feeders (frames arriving over `type: can` link edges)
 - [ ] Streaming path to vxedged `TelemetryService.StreamMetrics` (live dashboards/HMI)
