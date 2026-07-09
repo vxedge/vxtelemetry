@@ -9,6 +9,8 @@
       (experiment ID, manifest checksum, CLI version) → `results/<exp>.zip`
 - [ ] Ingestion-rate + completeness self-metrics
 - [ ] Container image + service descriptor example (`scrape_interval_s` config)
+- [ ] CI: build + publish image to GHCR with SHA256 digest recorded (release/artifact pipeline,
+      phase 2)
 
 ## Phase 2
 
