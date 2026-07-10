@@ -21,3 +21,9 @@ Master spec: `../docs/ARCHITECTURE.md` §11, §12 (metrics), §6 (`telemetry:` b
   service is closed to new customers; never add it as a dependency.
 - Transport for off-host telemetry rides the WireGuard link (§7).
 - Rust for services (§15); container-first, digest-tagged, non-root.
+
+## Project skills
+
+AI/contributor skills in `.claude/skills/`: **rust-patterns** (house Rust rules, per the
+Microsoft Rust Patterns book) and **testbed-quality** (the OEM-adoption bar). Apply both to
+every change.
