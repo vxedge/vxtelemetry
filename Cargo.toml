@@ -1,0 +1,25 @@
+[package]
+name = "vxtelemetry"
+description = "vxedge telemetry: scrape agent metrics per experiment manifest, archive results"
+publish = false
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/vxedge/vxtelemetry"
+
+[dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "time", "signal", "io-util", "fs"] }
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+sha2 = "0.10"
+zip = { version = "8", default-features = false, features = ["deflate"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
