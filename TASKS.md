@@ -2,12 +2,16 @@
 
 ## Phase 1 (critical path: exp-001 needs collect)
 
-- [ ] Crate scaffold + CI
-- [ ] Ingestion service v1: Prometheus scrape of vxagents exporters per manifest
-      `telemetry.prometheus.scrape_targets`; per-slice/per-node aggregation labels
-- [ ] `collect` backend: archive Prometheus TSDB slice + PCAPs + logs + metadata
-      (experiment ID, manifest checksum, CLI version) → `results/<exp>.zip`
-- [ ] Ingestion-rate + completeness self-metrics
+- [x] Crate scaffold + CI (build/test/clippy/fmt + cargo-deny, Dependabot)
+- [x] Ingestion v1: interval scrape of vxagents exporters per manifest
+      `telemetry.prometheus.scrape_targets`; raw .prom + structured samples.jsonl
+      *(per-slice aggregation happens downstream in the analysis notebook for now —
+      samples carry target labels)*
+- [x] `collect` backend: `results/<exp>.zip` with metadata.json (experiment ID, manifest
+      SHA-256, tool version, ingest stats) + manifest + full ingest dir; e2e test in CI
+      *(PCAPs/service logs join the bundle when vxpcap/services exist)*
+- [x] Ingestion-rate + completeness self-metrics (persisted into the archive)
+- [ ] Wire vxedged `TelemetryService.Collect` to invoke this (vxedge repo)
 - [ ] Container image + service descriptor example (`scrape_interval_s` config)
 - [ ] CI: build + publish image to GHCR with SHA256 digest recorded (release/artifact pipeline,
       phase 2)
