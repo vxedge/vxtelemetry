@@ -19,6 +19,8 @@
 ## Phase 2
 
 - [ ] GPU collectors: DCGM (preferred) / NVML fallback — utilization, VRAM, throttling
+- [ ] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
+      (/proc + cgroup), archived per arm — required by exp-002b (§12 compute metrics)
 - [ ] PCAP post-processing helpers: latency/jitter/loss extraction per slice (feeds
       vxperiments notebooks)
 
