@@ -10,6 +10,7 @@ pub mod archive;
 pub mod ingest;
 pub mod manifest_view;
 pub mod promtext;
+pub mod sample;
 pub mod scrape;
 
 #[derive(Debug, thiserror::Error)]

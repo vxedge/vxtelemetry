@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Duration;
 use vxtelemetry::manifest_view::ManifestView;
-use vxtelemetry::{archive, ingest};
+use vxtelemetry::{archive, ingest, sample};
 
 #[derive(Parser)]
 #[command(
@@ -30,6 +30,17 @@ enum Cmd {
         ingest_dir: PathBuf,
         #[arg(long, default_value_t = 5)]
         interval_s: u64,
+        #[arg(long, default_value_t = 60)]
+        duration_s: u64,
+    },
+    /// Sample CPU%/RSS of processes matched by cmdline regex (label=regex).
+    Sample {
+        #[arg(long = "match", required = true)]
+        matchers: Vec<String>,
+        #[arg(long)]
+        out_dir: PathBuf,
+        #[arg(long, default_value_t = 500)]
+        interval_ms: u64,
         #[arg(long, default_value_t = 60)]
         duration_s: u64,
     },
@@ -81,6 +92,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "some scrapes failed — completeness below 100%"
                 );
             }
+        }
+        Cmd::Sample {
+            matchers,
+            out_dir,
+            interval_ms,
+            duration_s,
+        } => {
+            let parsed: Result<Vec<_>, _> =
+                matchers.iter().map(|m| sample::Matcher::parse(m)).collect();
+            let summary = sample::run_sample(
+                &parsed?,
+                &out_dir,
+                Duration::from_millis(interval_ms.max(100)),
+                Duration::from_secs(duration_s),
+            )
+            .await?;
+            println!("{}", serde_json::to_string_pretty(&summary)?);
         }
         Cmd::Collect {
             manifest,
