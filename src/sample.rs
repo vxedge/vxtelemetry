@@ -116,7 +116,11 @@ pub async fn run_sample(
     duration: Duration,
 ) -> Result<HashMap<String, LabelSummary>, TelemetryError> {
     std::fs::create_dir_all(out_dir)?;
-    let tick_hz = clk_tck();
+    // clk_tck() and the per-tick /proc scan below are blocking syscalls/exec;
+    // spawn_blocking keeps them off the async runtime (rust-patterns skill).
+    let tick_hz = tokio::task::spawn_blocking(clk_tck)
+        .await
+        .expect("clk_tck blocking task panicked");
     let mut prev_ticks: HashMap<u32, u64> = HashMap::new();
     let mut lines = String::new();
     let mut agg: HashMap<String, Vec<(f64, u64)>> = HashMap::new();
@@ -126,10 +130,18 @@ pub async fn run_sample(
     for round in 0..=rounds {
         ticker.tick().await;
         let ts = now_ms();
-        for (label, pid) in matching_pids(matchers) {
-            let Some((ticks, rss_kb)) = read_proc(pid) else {
-                continue;
-            };
+        let matchers_owned = matchers.to_vec();
+        let observed = tokio::task::spawn_blocking(move || {
+            matching_pids(&matchers_owned)
+                .into_iter()
+                .filter_map(|(label, pid)| {
+                    read_proc(pid).map(|(ticks, rss_kb)| (label, pid, ticks, rss_kb))
+                })
+                .collect::<Vec<_>>()
+        })
+        .await
+        .expect("proc-sampling blocking task panicked");
+        for (label, pid, ticks, rss_kb) in observed {
             let prev = prev_ticks.insert(pid, ticks);
             // First observation of a pid has no delta — skip its cpu sample.
             if round == 0 || prev.is_none() {

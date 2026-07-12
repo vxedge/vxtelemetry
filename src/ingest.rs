@@ -107,9 +107,13 @@ pub async fn run_ingest(
 ) -> Result<IngestStats, TelemetryError> {
     tokio::fs::create_dir_all(&ingest_dir).await?;
     let mut stats = IngestStats::default();
+    // Inclusive range so the last tick lands at rounds*interval == duration
+    // (tokio::time::interval's first tick fires immediately) — matches
+    // sample.rs's loop so ingest and sample cover the same window instead of
+    // ingest finishing early and silently missing scrapes near the end.
     let rounds = (duration.as_secs() / interval.as_secs().max(1)).max(1);
     let mut ticker = tokio::time::interval(interval);
-    for _ in 0..rounds {
+    for _ in 0..=rounds {
         ticker.tick().await;
         scrape_round(targets, &ingest_dir, &mut stats).await?;
     }
