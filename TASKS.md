@@ -11,6 +11,12 @@
       SHA-256, tool version, ingest stats) + manifest + full ingest dir; e2e test in CI
       *(PCAPs/service logs join the bundle when vxpcap/services exist)*
 - [x] Ingestion-rate + completeness self-metrics (persisted into the archive)
+- [x] `optional_scrape_targets` (2026-07-13): a manifest scrape target can be marked
+      legitimately-absent-under-some-arms; its failures track in separate
+      `optional_scrapes_ok`/`optional_scrapes_failed` counters and never lower
+      `completeness_pct()`. Fixes exp-003's baseline arm always showing ~50% aggregate
+      completeness for a target (the OTA burst driver's exporter) that only exists during
+      the ota-burst arm by design — see docs/ARCHITECTURE.md §6
 - [ ] Wire vxedged `TelemetryService.Collect` to invoke this (vxedge repo)
 - [ ] Container image + service descriptor example (`scrape_interval_s` config)
 - [ ] CI: build + publish image to GHCR with SHA256 digest recorded (release/artifact pipeline,

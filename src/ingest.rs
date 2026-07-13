@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
+use crate::manifest_view::ScrapeTarget;
 use crate::{TelemetryError, promtext, scrape};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]
@@ -16,9 +17,18 @@ pub struct IngestStats {
     pub scrapes_ok: u64,
     pub scrapes_failed: u64,
     pub samples_total: u64,
+    /// Scrapes against `optional_scrape_targets` (§6) — tracked separately
+    /// so a target that's legitimately absent under some experiment arms
+    /// never drags down `completeness_pct()`.
+    #[serde(default)]
+    pub optional_scrapes_ok: u64,
+    #[serde(default)]
+    pub optional_scrapes_failed: u64,
 }
 
 impl IngestStats {
+    /// Completeness over *required* targets only — see `optional_scrapes_*`
+    /// for the (uncounted) optional-target attempts.
     pub fn completeness_pct(&self) -> f64 {
         let attempts = self.scrapes_ok + self.scrapes_failed;
         if attempts == 0 {
@@ -53,7 +63,7 @@ fn now_ms() -> i64 {
 
 /// One scrape round across all targets. Failures are counted, not fatal.
 pub async fn scrape_round(
-    targets: &[String],
+    targets: &[ScrapeTarget],
     ingest_dir: &Path,
     stats: &mut IngestStats,
 ) -> Result<(), TelemetryError> {
@@ -66,10 +76,14 @@ pub async fn scrape_round(
         .await?;
 
     for target in targets {
-        match scrape::fetch_metrics(target).await {
+        match scrape::fetch_metrics(&target.address).await {
             Ok(body) => {
-                stats.scrapes_ok += 1;
-                let raw_dir = ingest_dir.join("raw").join(sanitize(target));
+                if target.optional {
+                    stats.optional_scrapes_ok += 1;
+                } else {
+                    stats.scrapes_ok += 1;
+                }
+                let raw_dir = ingest_dir.join("raw").join(sanitize(&target.address));
                 tokio::fs::create_dir_all(&raw_dir).await?;
                 tokio::fs::write(raw_dir.join(format!("{ts}.prom")), &body).await?;
                 let mut lines = String::new();
@@ -77,7 +91,7 @@ pub async fn scrape_round(
                     stats.samples_total += 1;
                     let record = SampleRecord {
                         ts_unix_ms: ts,
-                        target,
+                        target: &target.address,
                         metric: &s.metric,
                         labels: &s.labels,
                         value: s.value,
@@ -88,8 +102,12 @@ pub async fn scrape_round(
                 samples_file.write_all(lines.as_bytes()).await?;
             }
             Err(e) => {
-                stats.scrapes_failed += 1;
-                tracing::warn!(%target, error = %e, "scrape failed");
+                if target.optional {
+                    stats.optional_scrapes_failed += 1;
+                } else {
+                    stats.scrapes_failed += 1;
+                }
+                tracing::warn!(target = %target.address, error = %e, optional = target.optional, "scrape failed");
             }
         }
     }
@@ -100,7 +118,7 @@ pub async fn scrape_round(
 /// Scrape all targets every `interval` for `duration`; returns final stats
 /// (also written to `<ingest_dir>/ingest-stats.json` for the archive).
 pub async fn run_ingest(
-    targets: &[String],
+    targets: &[ScrapeTarget],
     ingest_dir: PathBuf,
     interval: Duration,
     duration: Duration,
@@ -123,4 +141,87 @@ pub async fn run_ingest(
     )
     .await?;
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn serve_once(listener: TcpListener, body: &'static str) {
+        if let Ok((mut stream, _)) = listener.accept().await {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf).await;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(resp.as_bytes()).await;
+            let _ = stream.shutdown().await;
+        }
+    }
+
+    /// Ephemeral port grabbed then released — guaranteed nothing listens
+    /// there (same pattern vxprobe's loopback test uses).
+    async fn dead_addr() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        l.local_addr().unwrap().to_string()
+    }
+
+    async fn tmp_dir(label: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("vxtel-ingest-test-{label}-{}", std::process::id()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn optional_target_failure_does_not_affect_completeness() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ok_addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(serve_once(listener, "vxtest_metric 1\n"));
+
+        let targets = vec![
+            ScrapeTarget {
+                address: ok_addr,
+                optional: false,
+            },
+            ScrapeTarget {
+                address: dead_addr().await,
+                optional: true,
+            },
+        ];
+        let dir = tmp_dir("optional").await;
+        let mut stats = IngestStats::default();
+        scrape_round(&targets, &dir, &mut stats).await.unwrap();
+
+        assert_eq!(stats.scrapes_ok, 1);
+        assert_eq!(stats.scrapes_failed, 0);
+        assert_eq!(stats.optional_scrapes_ok, 0);
+        assert_eq!(stats.optional_scrapes_failed, 1);
+        assert_eq!(
+            stats.completeness_pct(),
+            100.0,
+            "optional failure must not count"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn required_target_failure_reduces_completeness() {
+        let targets = vec![ScrapeTarget {
+            address: dead_addr().await,
+            optional: false,
+        }];
+        let dir = tmp_dir("required").await;
+        let mut stats = IngestStats::default();
+        scrape_round(&targets, &dir, &mut stats).await.unwrap();
+
+        assert_eq!(stats.scrapes_failed, 1);
+        assert_eq!(stats.completeness_pct(), 0.0);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
