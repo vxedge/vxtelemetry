@@ -10,6 +10,20 @@
 - [x] `collect` backend: `results/<exp>.zip` with metadata.json (experiment ID, manifest
       SHA-256, tool version, ingest stats) + manifest + full ingest dir; e2e test in CI
       *(PCAPs/service logs join the bundle when vxpcap/services exist)*
+- [x] Image-digest recording (2026-07-18): `collect --record-image <ref>` (repeatable)
+      resolves each reference to its content-addressed identity via `podman image
+      inspect` (repo digest preferred, local image ID as fallback for locally-built
+      images) and records the map in `metadata.json` (§13). Deliberately caller-driven —
+      which images matter is the campaign runner's knowledge, not this tool's; guessing
+      would hardcode another repo's image naming here. Absent entirely (not `null`) when
+      unused, so pre-existing archives' metadata shape is unchanged; a failed lookup is
+      recorded as an honest `unresolved: …` value, never an abort of a completed
+      campaign point's archive. Live-verified against real podman (vx5g-core/vx5g-ran
+      localhost repo digests + mongo:7 registry digest + a nonsense ref correctly
+      recorded as unresolved); wired into `vxperiments/scripts/run-exp-010.sh`. Closes
+      the "image-digest recording into results metadata" item sized 2026-07-17 in
+      `vxedge/TASKS.md` — the investigation it called for landed here: archive-writing
+      is owned by this repo's `archive.rs`, not vxedge-core
 - [x] Ingestion-rate + completeness self-metrics (persisted into the archive)
 - [x] `optional_scrape_targets` (2026-07-13): a manifest scrape target can be marked
       legitimately-absent-under-some-arms; its failures track in separate

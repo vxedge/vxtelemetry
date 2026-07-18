@@ -66,11 +66,13 @@ async fn ingest_then_collect_roundtrip() {
     )
     .unwrap();
 
-    // Collect and verify the archive.
+    // Collect and verify the archive (no --record-image: image_digests must
+    // be absent from metadata.json, not null — the pre-existing shape).
     let out = tmp.join("exp-e2e.zip");
-    let metadata = archive::collect(&manifest_yaml, "exp-e2e", &ingest_dir, &out).unwrap();
+    let metadata = archive::collect(&manifest_yaml, "exp-e2e", &ingest_dir, &out, None).unwrap();
     assert_eq!(metadata.experiment_id, "exp-e2e");
     assert_eq!(metadata.manifest_sha256.len(), 64);
+    assert!(metadata.image_digests.is_none());
 
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
     let names: Vec<String> = (0..zip.len())
@@ -92,6 +94,33 @@ async fn ingest_then_collect_roundtrip() {
         .unwrap();
     assert_eq!(samples.lines().count(), 4);
     assert!(samples.contains("vxprobe_rtt_seconds"));
+    // No --record-image: metadata.json in the archive itself carries no
+    // image_digests key at all.
+    let mut meta_json = String::new();
+    zip.by_name("metadata.json")
+        .unwrap()
+        .read_to_string(&mut meta_json)
+        .unwrap();
+    assert!(!meta_json.contains("image_digests"));
+    drop(zip);
+
+    // With digests supplied, they land in the archived metadata.json.
+    let out2 = tmp.join("exp-e2e-digests.zip");
+    let mut digests = std::collections::BTreeMap::new();
+    digests.insert("vx5g-core".to_string(), "sha256:feedface".to_string());
+    let metadata2 =
+        archive::collect(&manifest_yaml, "exp-e2e", &ingest_dir, &out2, Some(digests)).unwrap();
+    assert_eq!(
+        metadata2.image_digests.as_ref().unwrap()["vx5g-core"],
+        "sha256:feedface"
+    );
+    let mut zip2 = zip::ZipArchive::new(std::fs::File::open(&out2).unwrap()).unwrap();
+    let mut meta_json2 = String::new();
+    zip2.by_name("metadata.json")
+        .unwrap()
+        .read_to_string(&mut meta_json2)
+        .unwrap();
+    assert!(meta_json2.contains("\"vx5g-core\": \"sha256:feedface\""));
 
     let _ = std::fs::remove_dir_all(&tmp);
 }

@@ -52,6 +52,14 @@ enum Cmd {
         ingest_dir: PathBuf,
         #[arg(long)]
         out: PathBuf,
+        /// Container image reference(s) whose content-addressed digest should
+        /// be recorded in the archive's metadata (repeatable). Resolved via
+        /// `podman image inspect` at collect time; a failed lookup is
+        /// recorded as an `unresolved: …` value rather than aborting the
+        /// archive. Which images matter is the campaign runner's call — this
+        /// tool doesn't guess.
+        #[arg(long = "record-image")]
+        record_images: Vec<String>,
     },
 }
 
@@ -114,11 +122,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             manifest,
             ingest_dir,
             out,
+            record_images,
         } => {
             let yaml = tokio::fs::read_to_string(&manifest).await?;
             let view = ManifestView::from_yaml(&yaml)?;
             let metadata = tokio::task::spawn_blocking(move || {
-                archive::collect(&yaml, &view.experiment.id, &ingest_dir, &out)
+                let image_digests = if record_images.is_empty() {
+                    None
+                } else {
+                    Some(archive::resolve_image_digests(&record_images))
+                };
+                archive::collect(&yaml, &view.experiment.id, &ingest_dir, &out, image_digests)
             })
             .await??;
             println!("{}", serde_json::to_string_pretty(&metadata)?);
