@@ -38,6 +38,28 @@
 
 ## Phase 2
 
+- [ ] **Consume the vxedge domain model; cut every tie to §6.1 files** (decided 2026-07-30).
+      `vxtelemetry ingest|collect --manifest <exp.yaml>` reads a §6.1 experiment manifest today
+      for scrape targets and archive metadata. §6.1 is being deleted, not demoted, so this is the
+      last consumer keeping it alive — and the reason `vxedge/crates/vxedge-core/src/lower.rs`
+      still exists at all (the daemon lowers a workspace to a §6.1 file purely so this tool can
+      read it).
+
+      `--manifest` therefore takes a **workspace directory** and builds the model via
+      `vxedge_core::Workspace::load_validated` + `model::build`. Scrape targets come from the
+      experiment's `telemetry.prometheus` block, which the model carries in `passthrough` until
+      it is typed. Archive metadata records the *workspace* identity — the `.vxp` id and version
+      plus a content hash over the workspace files — rather than a manifest SHA256 over a
+      generated document that exists nowhere else.
+
+      Needs a dependency on `vxedge-core`. That is a real coupling and worth stating: this repo
+      currently parses the manifest itself, and the alternative is duplicating the schema in a
+      second place that can silently disagree — which is exactly the failure §6.1's rejection is
+      meant to end.
+
+      **Blocks** `vxedge` task 5f (deleting §6.1 and `lower.rs`). Do it after the §6.0
+      zones/devices/functions schema change lands, so it is written against the final shape.
+
 - [ ] GPU collectors: DCGM (preferred) / NVML fallback — utilization, VRAM, throttling
 - [ ] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
       (/proc + cgroup), archived per arm — required by exp-002b (§12 compute metrics)
