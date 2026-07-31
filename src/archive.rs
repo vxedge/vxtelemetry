@@ -1,10 +1,14 @@
 //! Results archive: bundle the ingest dir + reproducibility metadata into
-//! `results/<exp>.zip` (§13: experiment ID, manifest checksum, tool version,
+//! `results/<exp>.zip` (§13: experiment ID, workspace checksum, tool version,
 //! and — when the caller opts in via `--record-image` — container image
 //! digests).
+//!
+//! The archive carries the **workspace** the run provisioned from, file for file, under
+//! `workspace/`. It used to carry a single `manifest.yaml` and a hash of it; from 2026-07-31
+//! that document no longer exists (§6.1 is gone), and a workspace is several files anyway. An
+//! archive is meant to be enough to re-run from, so it holds the real inputs.
 
 use serde::Serialize;
-use sha2::Digest;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
@@ -12,11 +16,19 @@ use std::process::Command;
 
 use crate::TelemetryError;
 use crate::ingest::IngestStats;
+use crate::workspace_view::{PackageIdentity, WorkspaceView};
 
 #[derive(Serialize)]
 pub struct ArchiveMetadata {
     pub experiment_id: String,
-    pub manifest_sha256: String,
+    /// SHA-256 over every file of the source workspace. Replaces `manifest_sha256`, which
+    /// hashed a §6.1 document that no longer exists; analysis notebooks reading archives from
+    /// both eras should accept either key.
+    pub workspace_sha256: String,
+    /// The `.vxp` descriptor's id and version, when the workspace carries one — the identity a
+    /// published experiment is cited by.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package: Option<PackageIdentity>,
     pub collected_at_unix_ms: i64,
     pub vxtelemetry_version: String,
     pub ingest: Option<IngestStats>,
@@ -105,10 +117,9 @@ fn walk(
     Ok(())
 }
 
-/// Create `out` (zip) from the ingest dir + manifest + metadata.
+/// Create `out` (zip) from the ingest dir + the source workspace + metadata.
 pub fn collect(
-    manifest_yaml: &str,
-    experiment_id: &str,
+    workspace: &WorkspaceView,
     ingest_dir: &Path,
     out: &Path,
     image_digests: Option<BTreeMap<String, String>>,
@@ -120,8 +131,9 @@ pub fn collect(
         .and_then(|b| serde_json::from_slice(&b).ok());
 
     let metadata = ArchiveMetadata {
-        experiment_id: experiment_id.to_string(),
-        manifest_sha256: format!("{:x}", sha2::Sha256::digest(manifest_yaml.as_bytes())),
+        experiment_id: workspace.experiment_id.clone(),
+        workspace_sha256: workspace.content_sha256(),
+        package: workspace.package.clone(),
         collected_at_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before unix epoch")
@@ -141,8 +153,11 @@ pub fn collect(
     zip.start_file("metadata.json", opts).map_err(arch_err)?;
     zip.write_all(&serde_json::to_vec_pretty(&metadata).expect("serializable metadata"))?;
 
-    zip.start_file("manifest.yaml", opts).map_err(arch_err)?;
-    zip.write_all(manifest_yaml.as_bytes())?;
+    for (name, bytes) in &workspace.files {
+        zip.start_file(format!("workspace/{name}"), opts)
+            .map_err(arch_err)?;
+        zip.write_all(bytes)?;
+    }
 
     let mut files = Vec::new();
     walk(ingest_dir, ingest_dir, &mut files)?;
@@ -197,7 +212,8 @@ mod tests {
         // metadata.json shape — absent, not null.
         let meta = ArchiveMetadata {
             experiment_id: "t".into(),
-            manifest_sha256: "0".repeat(64),
+            workspace_sha256: "0".repeat(64),
+            package: None,
             collected_at_unix_ms: 0,
             vxtelemetry_version: "0".into(),
             ingest: None,

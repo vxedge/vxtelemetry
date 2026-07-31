@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 
-use crate::manifest_view::ScrapeTarget;
+use crate::workspace_view::ScrapeTarget;
 use crate::{TelemetryError, promtext, scrape};
 
 #[derive(Debug, Default, Serialize, Deserialize, Clone)]

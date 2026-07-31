@@ -6,6 +6,27 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING: `ingest` and `collect` read a §6.0 experiment workspace, not a §6.1 manifest.**
+  `--workspace <dir>` is the flag; `--manifest` remains as an alias and takes the same
+  directory. §6.1 manifests stopped being a provisioning input in `vxedge` on 2026-07-31, and
+  this tool was the last consumer keeping them alive — `vxedge-core::lower` existed only to
+  hand this tool one, and is now deleted.
+
+  Done **without depending on `vxedge-core`**: the blocks read here (`telemetry`, `results`) are
+  untyped passthrough in the domain model, so the dependency would share no schema, and `vxedge`
+  is a separate private repo whose cross-repo checkout this repo's CI cannot do. What is shared
+  is one structural convention — a flat folder of documents, each declaring its `kind` — and
+  `workspace_view`'s tests assert it.
+
+- **BREAKING: archive metadata records `workspace_sha256` and the `.vxp` identity** in place of
+  `manifest_sha256`, and the archive bundles the source workspace under `workspace/` rather than
+  a single `manifest.yaml`. An archive should be enough to re-run from, and a workspace is
+  several files. The old hash covered a document the daemon generated and nobody authored.
+  `vxperiments`' notebooks accept either key, so frozen archives keep analysing.
+
+
 ## [0.1.0] - 2026-07-13
 
 **Phase-1 gate passed**: H1, H3, and H4 all have reproducible numbers (`vxperiments`).

@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vxtelemetry::ingest::{IngestStats, scrape_round};
-use vxtelemetry::{archive, manifest_view::ManifestView};
+use vxtelemetry::{archive, workspace_view::WorkspaceView};
 
 /// Minimal fake agent: answers every connection with a fixed exposition.
 async fn fake_agent() -> std::net::SocketAddr {
@@ -37,15 +37,34 @@ async fn ingest_then_collect_roundtrip() {
     let agent = fake_agent().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    let manifest_yaml = format!(
-        "experiment: {{ id: exp-e2e, name: e2e }}\ntelemetry:\n  prometheus:\n    scrape_targets: [\"{agent}\"]\n"
-    );
-    let view = ManifestView::from_yaml(&manifest_yaml).unwrap();
-    let targets = view.scrape_targets();
-
     let tmp = std::env::temp_dir().join(format!("vxtel-e2e-{}", std::process::id()));
     let ingest_dir = tmp.join("ingest");
     tokio::fs::create_dir_all(&ingest_dir).await.unwrap();
+
+    // A §6.0 workspace, the only shape this tool reads: several files, one of which declares
+    // `kind: experiment`.
+    let ws_dir = tmp.join("exp-e2e-ws");
+    tokio::fs::create_dir_all(&ws_dir).await.unwrap();
+    tokio::fs::write(
+        ws_dir.join("main.yaml"),
+        format!(
+            "kind: experiment\nid: exp-e2e\nvehicles: [veh]\ntelemetry:\n  prometheus:\n    scrape_targets: [\"{agent}\"]\n"
+        ),
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(
+        ws_dir.join("vehicle.yaml"),
+        "kind: vehicle\nid: veh\ndevices: {}\n",
+    )
+    .await
+    .unwrap();
+    tokio::fs::write(ws_dir.join("exp-e2e.vxp"), "id: exp-e2e\nversion: 0.1.0\n")
+        .await
+        .unwrap();
+
+    let view = WorkspaceView::load(&ws_dir).unwrap();
+    let targets = view.scrape_targets();
 
     // Two scrape rounds.
     let mut stats = IngestStats::default();
@@ -69,9 +88,10 @@ async fn ingest_then_collect_roundtrip() {
     // Collect and verify the archive (no --record-image: image_digests must
     // be absent from metadata.json, not null — the pre-existing shape).
     let out = tmp.join("exp-e2e.zip");
-    let metadata = archive::collect(&manifest_yaml, "exp-e2e", &ingest_dir, &out, None).unwrap();
+    let metadata = archive::collect(&view, &ingest_dir, &out, None).unwrap();
     assert_eq!(metadata.experiment_id, "exp-e2e");
-    assert_eq!(metadata.manifest_sha256.len(), 64);
+    assert_eq!(metadata.workspace_sha256.len(), 64);
+    assert_eq!(metadata.package.as_ref().unwrap().id, "exp-e2e");
     assert!(metadata.image_digests.is_none());
 
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
@@ -79,7 +99,11 @@ async fn ingest_then_collect_roundtrip() {
         .map(|i| zip.by_index(i).unwrap().name().to_string())
         .collect();
     assert!(names.contains(&"metadata.json".to_string()));
-    assert!(names.contains(&"manifest.yaml".to_string()));
+    // The archive carries the workspace itself — every file, so it is re-runnable rather than
+    // merely described.
+    assert!(names.contains(&"workspace/main.yaml".to_string()));
+    assert!(names.contains(&"workspace/vehicle.yaml".to_string()));
+    assert!(names.contains(&"workspace/exp-e2e.vxp".to_string()));
     assert!(names.contains(&"ingest/samples.jsonl".to_string()));
     assert!(
         names.iter().filter(|n| n.ends_with(".prom")).count() == 2,
@@ -108,8 +132,7 @@ async fn ingest_then_collect_roundtrip() {
     let out2 = tmp.join("exp-e2e-digests.zip");
     let mut digests = std::collections::BTreeMap::new();
     digests.insert("vx5g-core".to_string(), "sha256:feedface".to_string());
-    let metadata2 =
-        archive::collect(&manifest_yaml, "exp-e2e", &ingest_dir, &out2, Some(digests)).unwrap();
+    let metadata2 = archive::collect(&view, &ingest_dir, &out2, Some(digests)).unwrap();
     assert_eq!(
         metadata2.image_digests.as_ref().unwrap()["vx5g-core"],
         "sha256:feedface"

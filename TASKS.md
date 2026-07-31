@@ -38,27 +38,26 @@
 
 ## Phase 2
 
-- [ ] **Consume the vxedge domain model; cut every tie to §6.1 files** (decided 2026-07-30).
-      `vxtelemetry ingest|collect --manifest <exp.yaml>` reads a §6.1 experiment manifest today
-      for scrape targets and archive metadata. §6.1 is being deleted, not demoted, so this is the
-      last consumer keeping it alive — and the reason `vxedge/crates/vxedge-core/src/lower.rs`
-      still exists at all (the daemon lowers a workspace to a §6.1 file purely so this tool can
-      read it).
+- [x] **Read §6.0 workspaces; cut every tie to §6.1 files** (2026-07-31). `ingest` and `collect`
+      take `--workspace <dir>` (`--manifest` kept as an alias, same meaning), read the
+      `kind: experiment` document's `telemetry.prometheus` and `results` blocks, and take
+      identity from the `.vxp`. This was the last consumer keeping §6.1 alive, and
+      `vxedge-core::lower` — which existed only so the daemon could hand this tool a §6.1 file —
+      is deleted.
 
-      `--manifest` therefore takes a **workspace directory** and builds the model via
-      `vxedge_core::Workspace::load_validated` + `model::build`. Scrape targets come from the
-      experiment's `telemetry.prometheus` block, which the model carries in `passthrough` until
-      it is typed. Archive metadata records the *workspace* identity — the `.vxp` id and version
-      plus a content hash over the workspace files — rather than a manifest SHA256 over a
-      generated document that exists nowhere else.
+      **Done without depending on `vxedge-core`**, against the 2026-07-30 note that said it
+      would. Two reasons the earlier decision did not account for: `vxedge` is a separate
+      private repository, so the dependency needs cross-repo checkout credentials this repo's CI
+      does not have — a measurement tool would stop building for an authorisation reason. And
+      the blocks read here are *untyped passthrough* in the domain model, so the dependency
+      would not share one line of schema. What is shared is one structural convention (a flat
+      folder of documents, each declaring its `kind`), asserted in `workspace_view`'s tests.
 
-      Needs a dependency on `vxedge-core`. That is a real coupling and worth stating: this repo
-      currently parses the manifest itself, and the alternative is duplicating the schema in a
-      second place that can silently disagree — which is exactly the failure §6.1's rejection is
-      meant to end.
-
-      **Blocks** `vxedge` task 5f (deleting §6.1 and `lower.rs`). Do it after the §6.0
-      zones/devices/functions schema change lands, so it is written against the final shape.
+      Archive metadata records `workspace_sha256` (over every file, names included) and the
+      `.vxp` identity in place of `manifest_sha256`, and the archive bundles the workspace
+      itself under `workspace/` rather than one generated `manifest.yaml` — an archive should be
+      enough to re-run from. `vxperiments`' notebooks accept either key, so frozen archives keep
+      analysing.
 
 - [ ] GPU collectors: DCGM (preferred) / NVML fallback — utilization, VRAM, throttling
 - [ ] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
