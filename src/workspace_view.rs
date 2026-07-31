@@ -32,9 +32,13 @@ pub struct WorkspaceView {
     pub experiment_id: String,
     /// The `.vxp` package descriptor's identity, when the workspace has one.
     pub package: Option<PackageIdentity>,
-    /// Every file that makes up the workspace, in name order: `(name, bytes)`. Carried so the
-    /// archive can record *what was run from* rather than a summary of it.
+    /// The workspace *documents* (`*.yaml`, `*.vxp`) in name order: `(name, bytes)`. Carried
+    /// so the archive can record what was run from rather than a summary of it.
     pub files: Vec<(String, Vec<u8>)>,
+    /// Every file the identity covers — the documents plus the sandbox's own content
+    /// (`parts/`, `assets/`, `scripts/`, `tools/`), by relative path in sorted order,
+    /// excluding `results/`. See [`WorkspaceView::content_sha256`].
+    hashed_files: Vec<(String, Vec<u8>)>,
     telemetry: Option<TelemetryBlock>,
     results: Option<ResultsBlock>,
 }
@@ -169,11 +173,16 @@ impl WorkspaceView {
             }
         };
 
+        let mut hashed_files = Vec::new();
+        collect_hashed(root, root, &mut hashed_files)?;
+        hashed_files.sort();
+
         Ok(WorkspaceView {
             root: root.to_path_buf(),
             experiment_id: experiment.id,
             package,
             files,
+            hashed_files,
             telemetry: experiment.telemetry,
             results: experiment.results,
         })
@@ -204,16 +213,22 @@ impl WorkspaceView {
         self.results.as_ref()?.artifact_dir.as_deref()
     }
 
-    /// SHA-256 over the whole workspace: each file's name and bytes, in name order.
+    /// **The workspace identity**, per `ARCHITECTURE.md` §13 — the one rule, implemented here
+    /// independently of `vxedge-core` and pinned to the same test vector both sides assert.
     ///
-    /// This is what `manifest_sha256` used to be, and it answers the same question — "did every
-    /// repetition in this campaign run from the same input?" — about a thing that actually
-    /// exists. The §6.1 hash covered a document the daemon generated and nobody authored; two
-    /// workspaces could differ in a vehicle file and hash identically if lowering flattened the
-    /// difference away. Names are hashed alongside contents so renaming a file is a change.
+    /// SHA-256 over every file the experiment is made of: relative path, NUL, bytes, NUL, in
+    /// sorted path order, recursing into subdirectories but **skipping `results/`**. Outputs
+    /// are not inputs, and a sandbox's `parts/`, `assets/` and `scripts/` are what ran — a
+    /// local part that changes is a different experiment, and an identity that ignored it
+    /// would call two runs the same.
+    ///
+    /// It answers "did every repetition of this campaign run from the same input?" about a
+    /// thing that exists. `manifest_sha256` hashed a document the daemon generated and nobody
+    /// authored, so two workspaces differing in a vehicle file could hash identically if
+    /// lowering flattened the difference away.
     pub fn content_sha256(&self) -> String {
         let mut h = sha2::Sha256::new();
-        for (name, bytes) in &self.files {
+        for (name, bytes) in &self.hashed_files {
             h.update(name.as_bytes());
             h.update([0u8]);
             h.update(bytes);
@@ -221,6 +236,32 @@ impl WorkspaceView {
         }
         format!("{:x}", h.finalize())
     }
+}
+
+/// Every file under `dir` relative to `base`, skipping `results/`. The recursion is what
+/// distinguishes the identity from the document set: a sandbox's parts and scripts are content.
+fn collect_hashed(
+    base: &Path,
+    dir: &Path,
+    out: &mut Vec<(String, Vec<u8>)>,
+) -> Result<(), TelemetryError> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let rel = path
+            .strip_prefix(base)
+            .expect("walked path under base")
+            .to_string_lossy()
+            .replace('\\', "/");
+        if path.is_dir() {
+            if rel == "results" {
+                continue;
+            }
+            collect_hashed(base, &path, out)?;
+        } else {
+            out.push((rel, std::fs::read(&path)?));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -305,6 +346,39 @@ results:
                 .scrape_targets()
                 .is_empty()
         );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// The **shared test vector** for `ARCHITECTURE.md` §13's identity rule. `vxedge-core`
+    /// implements the same rule independently and asserts this same hash over this same
+    /// fixture — which is how two implementations of one rule stay honest without sharing code.
+    /// If this value changes, both sides move together, deliberately.
+    #[test]
+    fn the_workspace_identity_matches_the_shared_vector() {
+        let root = workspace(
+            "identity",
+            &[("main.yaml", "kind: experiment\nid: id-test\n")],
+        );
+        std::fs::create_dir_all(root.join("parts")).unwrap();
+        std::fs::write(root.join("parts/local-thing"), "payload\n").unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        std::fs::write(root.join("scripts/run.sh"), "#!/usr/bin/env bash\n").unwrap();
+
+        let id = WorkspaceView::load(&root).unwrap().content_sha256();
+        assert_eq!(
+            id, "f095a9facfabea97828ac5ee48a0da5516bfe036b546f612bcf182856db0efac",
+            "identity rule drifted from vxedge-core's"
+        );
+
+        // Outputs are not inputs: an archive appearing must not restate the identity of the run
+        // that produced it.
+        std::fs::create_dir_all(root.join("results")).unwrap();
+        std::fs::write(root.join("results/rep1.zip"), "not an input").unwrap();
+        assert_eq!(WorkspaceView::load(&root).unwrap().content_sha256(), id);
+
+        // A local part is part of what ran.
+        std::fs::write(root.join("parts/local-thing"), "different\n").unwrap();
+        assert_ne!(WorkspaceView::load(&root).unwrap().content_sha256(), id);
         std::fs::remove_dir_all(&root).ok();
     }
 
