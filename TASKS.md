@@ -79,9 +79,36 @@
       `grep` that `exp-003-ws/scripts/run.sh` never calls `vxtelemetry sample`. Not named as
       blocking by #23's own scope (only exp-002b was), so left open as a separate, smaller
       follow-on rather than assumed in scope here.
-- [ ] Wire `vxtelemetry sample` into `exp-003-ws/scripts/run.sh` (OTA co-location footprint)
-      — the mechanism this needs already exists and is proven correct against exp-002b's own
-      campaign (see above); this is purely a runner-wiring task, not new engineering
+- [x] Wire `vxtelemetry sample` into `exp-003-ws/scripts/run.sh` (OTA co-location footprint)
+      — **delivered 2026-08-04** (`docs/TASKS.md` #23). Two labels sampled together for the
+      whole probe window: `ota-server` (the ota service backend's own process,
+      `vxota serve --artifacts-dir ... --listen ...`, spawned by `vxedged`'s generic service
+      backend — running in both arms, idle in `baseline`, actively serving in `ota-burst`)
+      and `ota-probe` (the burst fetcher this script spawns directly, `vxota-probe fetch
+      --server ... --target burst-artifact ...`, only in `ota-burst`). Match strings verified
+      against the real cmdlines both processes actually run with, not assumed — confirmed via
+      `vxedge-core::services::OtaBackend::command`'s exact `SpawnSpec` and the script's own
+      existing `vxota-probe fetch` invocation; "vxota serve" (space) and "vxota-probe" (hyphen)
+      can't cross-match each other.
+
+      `analyze_exp003.py` extended alongside it — wiring the runner alone would have archived
+      the data without ever surfacing it, the same gap that made exp-002b's own delivery
+      invisible on the board until checked directly. New `## OTA process resource footprint`
+      section + `exp-003-resource.csv` (one row per arm×label, since exp-003 can have up to
+      two labels per arm unlike exp-002b's one-per-arm shape); backward-compatible "n/a" note
+      when `ingest/resource-summary.json` is absent (older archives).
+
+      **Live-verified end to end**, not just code-reviewed: ran the real `--quick` campaign
+      (user ran it under sudo; CAP_NET_ADMIN needed). `baseline`'s archive carries only
+      `ota-server` (0% CPU, 9.4MB RSS, idle); `ota-burst`'s carries both `ota-server`
+      (1.9%/10.4MB) and `ota-probe` (32%/17.1MB — a real, sensible, working-fetcher number).
+      Ran the updated analyzer against both the new real archives (full resource-footprint
+      table renders correctly) and the old pre-wiring archives (clean "n/a" fallback, zero
+      regression). One real bug caught by this live pass: the resource-CSV write was ordered
+      *before* `out_dir.mkdir()`, so it crashed with `FileNotFoundError` on an output
+      directory that hadn't been created yet — found by actually running it against real
+      archives, not by reading the diff. `shellcheck`/`check-runners.sh`/`py_compile` all
+      clean afterward.
 - [ ] PCAP post-processing helpers: latency/jitter/loss extraction per slice (feeds
       vxperiments notebooks)
 
