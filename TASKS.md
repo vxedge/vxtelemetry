@@ -60,8 +60,28 @@
       analysing.
 
 - [ ] GPU collectors: DCGM (preferred) / NVML fallback — utilization, VRAM, throttling
-- [ ] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
-      (/proc + cgroup), archived per arm — required by exp-002b (§12 compute metrics)
+- [x] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
+      (/proc + cgroup), archived per arm — required by exp-002b (§12 compute metrics).
+      **Found already delivered, 2026-08-04** (`docs/TASKS.md` #23, cross-reference there):
+      `src/sample.rs` (landed 2026-07-11, fixed 2026-07-12), the `vxtelemetry sample --match
+      label=regex --out-dir DIR` CLI subcommand, and `exp-002b-ws/scripts/run.sh`'s own
+      per-arm invocation of it were all already in place — this line was simply never
+      checked off. Verified live rather than trusting the code alone: unzipped a real
+      archive (`results/exp-002b/rep1-container.zip`) and confirmed `ingest/
+      resource-summary.json` carries real, non-placeholder numbers
+      (`cpu_pct_mean: 4.28, rss_mb_mean: 7.33`, 120 samples); then ran
+      `notebooks/analyze_exp002b.py` against the full real campaign (30 archives, 5 reps ×
+      6 arms) and got a complete, sensible summary table — e.g. `microvm-mmio` at
+      14.95%/146.4MB vs `container` at 4.3%/7.3MB, driving real, correct decomposition
+      verdicts (transport/vhost/management all "MATTERS", machine type "no measurable
+      effect"). **Not yet wired into exp-003** despite this module's own doc comment
+      anticipating it ("reused by exp-003 (OTA co-location footprint)") — confirmed via
+      `grep` that `exp-003-ws/scripts/run.sh` never calls `vxtelemetry sample`. Not named as
+      blocking by #23's own scope (only exp-002b was), so left open as a separate, smaller
+      follow-on rather than assumed in scope here.
+- [ ] Wire `vxtelemetry sample` into `exp-003-ws/scripts/run.sh` (OTA co-location footprint)
+      — the mechanism this needs already exists and is proven correct against exp-002b's own
+      campaign (see above); this is purely a runner-wiring task, not new engineering
 - [ ] PCAP post-processing helpers: latency/jitter/loss extraction per slice (feeds
       vxperiments notebooks)
 
