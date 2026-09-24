@@ -6,6 +6,10 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Open-source release preparation: `LICENSE` (Apache-2.0), `NOTICE`, rewritten `README.md`. Crate `license` metadata is now `Apache-2.0` (was `MIT OR Apache-2.0`).
+
 ### Changed
 
 - **BREAKING: `ingest` and `collect` read a §6.0 experiment workspace, not a §6.1 manifest.**
@@ -30,7 +34,7 @@ All notable changes to this repo are documented here. Format follows
 ## [0.1.0] - 2026-07-13
 
 **Phase-1 gate passed**: H1, H3, and H4 all have reproducible numbers (`vxperiments`).
-Repos stay private for now — see `docs/STATUS.md` for the public-visibility punch list.
+Repositories were still private at this release.
 
 ### Added
 - `ingest`: manifest-driven Prometheus scraping (no system Prometheus needed), raw

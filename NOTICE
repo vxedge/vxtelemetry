@@ -1,0 +1,15 @@
+vxedge — vxtelemetry
+Copyright 2026 The vxedge Authors
+
+This product includes software developed as part of the vxedge project
+(https://github.com/vxedge).
+
+Source code is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+---
+
+Third-party notices
+
+This repository does not vendor or redistribute third-party source code or binaries.
+Third-party dependencies are consumed through their normal package channels (e.g. crates.io)
+under their own licences.

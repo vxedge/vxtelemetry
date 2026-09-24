@@ -62,7 +62,7 @@
 - [ ] GPU collectors: DCGM (preferred) / NVML fallback — utilization, VRAM, throttling
 - [x] Per-node resource sampling during runs: CPU/RSS of qemu PIDs and netns payloads
       (/proc + cgroup), archived per arm — required by exp-002b (§12 compute metrics).
-      **Found already delivered, 2026-08-04** (`docs/TASKS.md` #23, cross-reference there):
+      **Found already delivered, 2026-08-04** (`docs/ROADMAP.md` #23, cross-reference there):
       `src/sample.rs` (landed 2026-07-11, fixed 2026-07-12), the `vxtelemetry sample --match
       label=regex --out-dir DIR` CLI subcommand, and `exp-002b-ws/scripts/run.sh`'s own
       per-arm invocation of it were all already in place — this line was simply never
@@ -80,7 +80,7 @@
       blocking by #23's own scope (only exp-002b was), so left open as a separate, smaller
       follow-on rather than assumed in scope here.
 - [x] Wire `vxtelemetry sample` into `exp-003-ws/scripts/run.sh` (OTA co-location footprint)
-      — **delivered 2026-08-04** (`docs/TASKS.md` #23). Two labels sampled together for the
+      — **delivered 2026-08-04** (`docs/ROADMAP.md` #23). Two labels sampled together for the
       whole probe window: `ota-server` (the ota service backend's own process,
       `vxota serve --artifacts-dir ... --listen ...`, spawned by `vxedged`'s generic service
       backend — running in both arms, idle in `baseline`, actively serving in `ota-burst`)
