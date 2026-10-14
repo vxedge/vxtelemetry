@@ -234,7 +234,9 @@ impl WorkspaceView {
             h.update(bytes);
             h.update([0u8]);
         }
-        format!("{:x}", h.finalize())
+        // sha2 0.11 returns a `hybrid_array::Array`, which has no `LowerHex`; spell the hex out.
+        let digest = h.finalize();
+        digest.iter().map(|b| format!("{b:02x}")).collect()
     }
 }
 
