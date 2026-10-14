@@ -7,6 +7,16 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+    # unsafe-libyaml is unmaintained upstream (repository archived 2024-03-25, last release
+    # 0.2.11) — an informational "unmaintained" advisory, not a vulnerability. It is reached
+    # only through serde_yaml_ng 0.10.0 (`cargo tree -i unsafe-libyaml`), which is the latest
+    # published release (checked 2026-10-14), so no bump removes it. Replacing the YAML
+    # parser is a deliberate decision shared with vxedge (same dependency, same ignore there:
+    # vxedge/vxedge#11), not a CI side effect. EXPIRES 2027-01-14: cargo-deny does not enforce
+    # this date, so re-check then and delete this entry if a maintained replacement landed.
+    "RUSTSEC-2024-0449",
+]
 
 [licenses]
 version = 2
