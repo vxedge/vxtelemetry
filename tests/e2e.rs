@@ -96,7 +96,7 @@ async fn ingest_then_collect_roundtrip() {
 
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
     let names: Vec<String> = (0..zip.len())
-        .map(|i| zip.by_index(i).unwrap().name().to_string())
+        .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
     assert!(names.contains(&"metadata.json".to_string()));
     // The archive carries the workspace itself — every file, so it is re-runnable rather than

@@ -148,7 +148,7 @@ pub fn collect(
     }
     let file = std::fs::File::create(out)?;
     let mut zip = zip::ZipWriter::new(file);
-    let opts: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+    let opts: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default();
 
     zip.start_file("metadata.json", opts).map_err(arch_err)?;
     zip.write_all(&serde_json::to_vec_pretty(&metadata).expect("serializable metadata"))?;
