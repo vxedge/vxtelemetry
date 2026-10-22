@@ -6,8 +6,12 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-22
+
 ### Added
 
+- Tag-triggered release workflow (`.github/workflows/release.yml`): builds `vxtelemetry` for `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (native Ubuntu 24.04 runners, `--locked`), publishes `vxtelemetry-<version>-<target>.tar.gz` archives with a `SHA256SUMS`, and attaches build provenance (`gh attestation verify`). `workflow_dispatch` is a dry run that creates no release.
+- `collect`: opt-in image-digest recording into archive metadata (`ARCHITECTURE.md` §13).
 - Open-source release preparation: `LICENSE` (Apache-2.0), `NOTICE`, rewritten `README.md`. Crate `license` metadata is now `Apache-2.0` (was `MIT OR Apache-2.0`).
 
 ### Changed
@@ -30,6 +34,9 @@ All notable changes to this repo are documented here. Format follows
   several files. The old hash covered a document the daemon generated and nobody authored.
   `vxperiments`' notebooks accept either key, so frozen archives keep analysing.
 
+### Security
+
+- `zip` 8 -> 9, which fixes RUSTSEC-2026-0367, -0368 and -0369 (this tool only writes archives; it does not extract).
 
 ## [0.1.0] - 2026-07-13
 
