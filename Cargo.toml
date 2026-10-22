@@ -2,7 +2,7 @@
 name = "vxtelemetry"
 description = "vxedge telemetry: scrape agent metrics per experiment manifest, archive results"
 publish = false
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.96"
 license = "Apache-2.0"
