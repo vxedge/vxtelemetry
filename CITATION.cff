@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite it as below."
+title: "vxtelemetry: telemetry ingestion and results archiving for an all-software SDV testbed"
+type: software
+authors:
+  - family-names: "Djaafri"
+    given-names: "Fouzi"
+    affiliation: "Independent Researcher"
+repository-code: "https://github.com/vxedge/vxtelemetry"
+url: "https://vxedge.dev"
+version: "0.1.0"
+date-released: "2026-07-13"
+license: Apache-2.0
+keywords:
+  - sdv
+  - software-defined-vehicle
+  - network-slicing
+  - 5g
+  - reproducible-research
+  - telemetry
+  - results-archiving
+abstract: >-
+  vxtelemetry scrapes experiment targets, exports Prometheus metrics and archives every run with the manifest sha256 and tool versions, so results can be reproduced.
