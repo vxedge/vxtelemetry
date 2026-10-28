@@ -6,6 +6,10 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Security
+
+- Lockfile update `tokio` 1.53.1 -> 1.54.1, which fixes RUSTSEC-2026-0386 (unsound `AsyncFd` constructors). This repo does not call `AsyncFd` directly.
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
