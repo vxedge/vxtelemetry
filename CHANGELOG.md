@@ -15,6 +15,16 @@ All notable changes to this repo are documented here. Format follows
 - `metadata.json` gains `workspace_identity_algorithm`. An archive without it was written before
   `vxws/2` and holds a `vxws/1` value, which `identity::compute(root, "vxws/1")` still
   reproduces. Both rules are pinned to the same test vectors as `vxedge-core`.
+- The archive's `workspace/` carries every file the workspace identity covers (documents,
+  `parts/`, `assets/`, `scripts/`, `tools/`), not only the documents, so an archive is enough to
+  re-run from and re-hashes to its own `workspace_sha256`. Archives grow by the size of those
+  directories.
+
+### Added
+
+- `vxtelemetry verify <archive>`: re-hashes `workspace/` under the recorded algorithm, prints the
+  result as JSON and exits 1 on a mismatch. An archive naming no algorithm is refused with the
+  reason. `archive::verify` is the library form.
 
 ## [0.2.1] - 2026-11-04
 

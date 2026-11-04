@@ -4,13 +4,15 @@
 //! digests).
 //!
 //! The archive carries the **workspace** the run provisioned from, file for file, under
-//! `workspace/`. It used to carry a single `manifest.yaml` and a hash of it; from 2026-07-31
-//! that document no longer exists (§6.1 is gone), and a workspace is several files anyway. An
-//! archive is meant to be enough to re-run from, so it holds the real inputs.
+//! `workspace/`: every file the workspace identity covers, documents, parts, assets, scripts and
+//! tools, and nothing it excludes. So the archive is enough to re-run from, and it verifies
+//! itself: re-hashing `workspace/` under `workspace_identity_algorithm` gives back
+//! `workspace_sha256` ([`verify`]). Older archives carried only the documents and name no
+//! algorithm; they cannot be checked this way, and [`verify`] says so.
 
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::process::Command;
 
@@ -167,7 +169,9 @@ pub fn collect(
     zip.start_file("metadata.json", opts).map_err(arch_err)?;
     zip.write_all(&serde_json::to_vec_pretty(&metadata).expect("serializable metadata"))?;
 
-    for (name, bytes) in &workspace.files {
+    // Every input the identity covers, so `workspace/` re-hashes to `workspace_sha256` (see
+    // [`verify`]) and is enough to re-run from.
+    for (name, bytes) in &workspace.inputs {
         zip.start_file(format!("workspace/{name}"), opts)
             .map_err(arch_err)?;
         zip.write_all(bytes)?;
@@ -183,6 +187,82 @@ pub fn collect(
     }
     zip.finish().map_err(arch_err)?;
     Ok(metadata)
+}
+
+/// What [`verify`] found: the identity the archive records and the one its `workspace/`
+/// re-hashes to.
+#[derive(Debug, Serialize)]
+pub struct Verification {
+    pub ok: bool,
+    pub algorithm: String,
+    pub recorded: String,
+    pub computed: String,
+    /// Files under `workspace/`.
+    pub files: usize,
+}
+
+/// Re-hash an archive's `workspace/` under its recorded algorithm and compare with its recorded
+/// `workspace_sha256`. Every entry under `workspace/` counts and nothing is excluded: the
+/// archive holds the identity's inputs already, so anything added to it is a difference.
+///
+/// An archive that names no algorithm was written when archives carried only the workspace
+/// documents; it is refused with that reason rather than reported as a mismatch.
+pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
+    let arch_err = |e: zip::result::ZipError| TelemetryError::Archive(e.to_string());
+    let bad = |msg: String| TelemetryError::Archive(format!("`{}`: {msg}", archive.display()));
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(archive)?).map_err(arch_err)?;
+
+    let metadata: serde_json::Value = {
+        let mut entry = zip
+            .by_name("metadata.json")
+            .map_err(|_| bad("no metadata.json; not a results archive".into()))?;
+        let mut text = String::new();
+        entry.read_to_string(&mut text)?;
+        serde_json::from_str(&text).map_err(|e| bad(format!("metadata.json: {e}")))?
+    };
+    let recorded = metadata["workspace_sha256"]
+        .as_str()
+        .ok_or_else(|| bad("metadata.json has no workspace_sha256".into()))?
+        .to_string();
+    let algorithm = metadata["workspace_identity_algorithm"]
+        .as_str()
+        .ok_or_else(|| {
+            bad(
+                "metadata.json names no workspace_identity_algorithm: the archive was written \
+                 when archives carried only the workspace documents, so its workspace/ cannot \
+                 reproduce its identity"
+                    .into(),
+            )
+        })?
+        .to_string();
+
+    let mut inputs = Vec::new();
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i).map_err(arch_err)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let Some(rel) = entry
+            .name()
+            .map_err(arch_err)?
+            .strip_prefix("workspace/")
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes)?;
+        inputs.push((rel, bytes));
+    }
+    inputs.sort();
+    let computed = crate::identity::digest(&algorithm, &inputs)?;
+    Ok(Verification {
+        ok: computed == recorded,
+        algorithm,
+        recorded,
+        computed,
+        files: inputs.len(),
+    })
 }
 
 #[cfg(test)]
@@ -264,5 +344,125 @@ mod tests {
             .get("vxedge-test-image-that-cannot-exist:v0")
             .expect("entry present");
         assert!(entry.starts_with("unresolved:"), "got: {entry}");
+    }
+
+    /// G1: an archive is enough to re-run from and to check. Its `workspace/` holds every file
+    /// the identity covers, so unpacking it and re-hashing under the recorded algorithm gives
+    /// back `workspace_sha256`. Excluded files (`.git`, editor droppings) stay out.
+    #[test]
+    fn the_archived_workspace_rehashes_to_the_recorded_identity() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-selfverify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        for (rel, body) in [
+            ("main.yaml", "kind: experiment\nid: exp-sv\n"),
+            (
+                "exp-sv.vxp",
+                "id: exp-sv\nversion: 0.1.0\nentry: main.yaml\n",
+            ),
+            ("parts/local-thing", "payload\n"),
+            ("scripts/run.sh", "#!/usr/bin/env bash\n"),
+            (".git/HEAD", "ref: refs/heads/main\n"),
+            ("main.yaml~", "backup\n"),
+        ] {
+            let p = ws.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        let ingest = tmp.join("ingest");
+        std::fs::create_dir_all(&ingest).unwrap();
+        let out = tmp.join("exp-sv.zip");
+        let view = WorkspaceView::load(&ws).unwrap();
+        let meta = collect(&view, &ingest, &out, None).unwrap();
+
+        let unpacked = tmp.join("unpacked");
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let mut names = Vec::new();
+        for i in 0..zip.len() {
+            let mut entry = zip.by_index(i).unwrap();
+            let name = entry.name().unwrap().to_string();
+            if let Some(rel) = name.strip_prefix("workspace/") {
+                names.push(rel.to_string());
+                let p = unpacked.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::io::copy(&mut entry, &mut std::fs::File::create(p).unwrap()).unwrap();
+            }
+        }
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "exp-sv.vxp",
+                "main.yaml",
+                "parts/local-thing",
+                "scripts/run.sh"
+            ]
+        );
+        assert_eq!(
+            crate::identity::compute(&unpacked, &meta.workspace_identity_algorithm).unwrap(),
+            meta.workspace_sha256
+        );
+        let v = verify(&out).unwrap();
+        assert!(v.ok, "{v:?}");
+        assert_eq!(v.files, 4);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    fn zip_with(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let opts: zip::write::FileOptions<'_, '_, ()> = zip::write::FileOptions::default();
+        for (name, bytes) in entries {
+            zip.start_file(*name, opts).unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    /// A file added to, or changed in, an archive's `workspace/` is caught.
+    #[test]
+    fn a_tampered_archive_fails_verification() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-tamper-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let main: &[u8] = b"kind: experiment\nid: e\n";
+        let id = crate::identity::digest("vxws/2", &[("main.yaml".into(), main.to_vec())]).unwrap();
+        let meta = serde_json::json!({
+            "workspace_sha256": id, "workspace_identity_algorithm": "vxws/2",
+        })
+        .to_string();
+        let good = tmp.join("good.zip");
+        zip_with(
+            &good,
+            &[
+                ("metadata.json", meta.as_bytes()),
+                ("workspace/main.yaml", main),
+            ],
+        );
+        assert!(verify(&good).unwrap().ok);
+
+        let extra = tmp.join("extra.zip");
+        zip_with(
+            &extra,
+            &[
+                ("metadata.json", meta.as_bytes()),
+                ("workspace/main.yaml", main),
+                ("workspace/parts/x", b"added"),
+            ],
+        );
+        assert!(!verify(&extra).unwrap().ok);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// An archive from before self-verifying archives is refused with the reason, not reported
+    /// as a mismatch: its identity is real, it just was never meant to be reproducible this way.
+    #[test]
+    fn an_archive_naming_no_algorithm_is_refused_with_the_reason() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-old-{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let old = tmp.join("old.zip");
+        let meta = serde_json::json!({ "workspace_sha256": "0".repeat(64) }).to_string();
+        zip_with(&old, &[("metadata.json", meta.as_bytes())]);
+        let err = verify(&old).unwrap_err().to_string();
+        assert!(err.contains("workspace_identity_algorithm"), "{err}");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

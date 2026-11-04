@@ -31,10 +31,11 @@ pub struct WorkspaceView {
     pub experiment_id: String,
     /// The `.vxp` package descriptor's identity, when the workspace has one.
     pub package: Option<PackageIdentity>,
-    /// The workspace *documents* (`*.yaml`, `*.vxp`) in name order: `(name, bytes)`. Carried
-    /// so the archive can record what was run from rather than a summary of it.
-    pub files: Vec<(String, Vec<u8>)>,
-    /// The workspace identity under [`crate::identity::CURRENT`], computed at load. See
+    /// Every file the identity covers, `(relative path, bytes)` in sorted path order: the
+    /// documents plus the sandbox's `parts/`, `assets/`, `scripts/` and `tools/`, without what
+    /// [`crate::identity`] excludes. Read once, so the archive ships the bytes that were hashed.
+    pub inputs: Vec<(String, Vec<u8>)>,
+    /// The workspace identity under [`crate::identity::CURRENT`], over `inputs`. See
     /// [`WorkspaceView::content_sha256`].
     identity: String,
     telemetry: Option<TelemetryBlock>,
@@ -121,11 +122,8 @@ impl WorkspaceView {
                 )
             })
             .collect();
-        // Sorted so the content hash below is a property of the workspace rather than of the
-        // order the filesystem happened to hand the entries back.
         names.sort();
 
-        let mut files = Vec::new();
         let mut experiment: Option<ExperimentDocView> = None;
         let mut experiment_count = 0usize;
         let mut package: Option<PackageIdentity> = None;
@@ -140,7 +138,6 @@ impl WorkspaceView {
 
             if path.extension().and_then(|e| e.to_str()) == Some("vxp") {
                 package = serde_yaml_ng::from_slice::<PackageIdentity>(&bytes).ok();
-                files.push((name, bytes));
                 continue;
             }
 
@@ -152,7 +149,6 @@ impl WorkspaceView {
                     serde_yaml_ng::from_slice(&bytes).map_err(|e| bad(format!("`{name}`: {e}")))?,
                 );
             }
-            files.push((name, bytes));
         }
 
         let experiment = match (experiment, experiment_count) {
@@ -171,13 +167,14 @@ impl WorkspaceView {
             }
         };
 
-        let identity = crate::identity::compute(root, crate::identity::CURRENT)?;
+        let inputs = crate::identity::read_inputs(root, crate::identity::CURRENT)?;
+        let identity = crate::identity::digest(crate::identity::CURRENT, &inputs)?;
 
         Ok(WorkspaceView {
             root: root.to_path_buf(),
             experiment_id: experiment.id,
             package,
-            files,
+            inputs,
             identity,
             telemetry: experiment.telemetry,
             results: experiment.results,
