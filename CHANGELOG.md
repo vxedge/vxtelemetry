@@ -6,6 +6,14 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-04
+
+An archive is enough to check a run and to re-run it. It now carries every file the workspace
+identity covers, and `vxtelemetry verify` re-hashes them to the recorded identity. The identity is
+computed under `vxws/2`, as vxedge 0.5.3 computes it, so values differ from 0.2.1's; older archives
+stay verifiable as `vxws/1`. Archives grow by the size of the workspace's `parts/`, `assets/`,
+`scripts/` and `tools/`.
+
 ### Changed
 
 - The workspace identity in `metadata.json` is now computed under `vxws/2` (`ARCHITECTURE.md`
