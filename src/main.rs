@@ -67,6 +67,12 @@ enum Cmd {
         #[arg(long = "record-image")]
         record_images: Vec<String>,
     },
+    /// Re-hash an archive's `workspace/` under its recorded algorithm and compare with its
+    /// recorded `workspace_sha256`. Prints the result as JSON; exits 1 on a mismatch.
+    Verify {
+        /// The results archive (`.zip`) written by `collect`.
+        archive: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -140,6 +146,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .await??;
             println!("{}", serde_json::to_string_pretty(&metadata)?);
+        }
+        Cmd::Verify { archive } => {
+            let v = tokio::task::spawn_blocking(move || archive::verify(&archive)).await??;
+            println!("{}", serde_json::to_string_pretty(&v)?);
+            if !v.ok {
+                std::process::exit(1);
+            }
         }
     }
     Ok(())

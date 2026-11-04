@@ -36,33 +36,53 @@ pub const CURRENT: &str = VXWS2;
 /// The identity of the workspace at `root` under `algorithm` (`vxws/1` or `vxws/2`), as
 /// lower-case hex.
 pub fn compute(root: &Path, algorithm: &str) -> Result<String, TelemetryError> {
+    let inputs = read_inputs(root, algorithm)?;
+    digest(algorithm, &inputs)
+}
+
+/// Every file `algorithm` covers under `root`, as `(relative path, bytes)` in sorted path order.
+/// The archive carries exactly these, so the bytes hashed are the bytes shipped.
+pub fn read_inputs(root: &Path, algorithm: &str) -> Result<Vec<(String, Vec<u8>)>, TelemetryError> {
     let rules = match algorithm {
         VXWS1 => None,
         VXWS2 => Some(rules(root)?),
-        other => {
-            return Err(TelemetryError::Manifest(format!(
-                "unknown workspace identity algorithm `{other}`; this build knows {VXWS1} and \
-                 {VXWS2}"
-            )));
-        }
+        other => return Err(unknown(other)),
     };
     let mut files = Vec::new();
     walk(root, root, rules.as_ref(), &mut files)?;
     files.sort();
+    files
+        .into_iter()
+        .map(|(rel, path)| Ok((rel, std::fs::read(&path)?)))
+        .collect()
+}
 
+/// The identity of an already-selected input set: no exclusion is applied, every entry counts.
+/// `inputs` must be in sorted path order, as [`read_inputs`] returns them.
+pub fn digest(algorithm: &str, inputs: &[(String, Vec<u8>)]) -> Result<String, TelemetryError> {
     let mut h = sha2::Sha256::new();
-    if algorithm == VXWS2 {
-        h.update(VXWS2.as_bytes());
-        h.update([0u8]);
+    match algorithm {
+        VXWS1 => {}
+        VXWS2 => {
+            h.update(VXWS2.as_bytes());
+            h.update([0u8]);
+        }
+        other => return Err(unknown(other)),
     }
-    for (rel, path) in files {
+    for (rel, bytes) in inputs {
         h.update(rel.as_bytes());
         h.update([0u8]);
-        h.update(std::fs::read(&path)?);
+        h.update(bytes);
         h.update([0u8]);
     }
     // sha2 0.11 returns a `hybrid_array::Array`, which has no `LowerHex`; spell the hex out.
     Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn unknown(algorithm: &str) -> TelemetryError {
+    TelemetryError::Manifest(format!(
+        "unknown workspace identity algorithm `{algorithm}`; this build knows {VXWS1} and {VXWS2}"
+    ))
 }
 
 fn rules(root: &Path) -> Result<Gitignore, TelemetryError> {
