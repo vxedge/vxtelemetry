@@ -39,10 +39,11 @@ pub struct ArchiveMetadata {
     /// Which images matter is the campaign runner's knowledge, not this
     /// tool's: guessing here would mean hardcoding another repo's image
     /// naming (e.g. vxedge-core's fiveg pod images) into vxtelemetry.
-    /// Values are either a repo digest / image ID, or an honest
-    /// `unresolved: …` string — a digest lookup failing must never destroy
-    /// a completed campaign point's archive, but silently omitting the
-    /// failure would misrepresent what was recorded.
+    /// Values are a repo digest / image ID, [`HOST_PROCESS`] for a `local/`
+    /// host-process part, or an honest `unresolved: …` string — a digest
+    /// lookup failing must never destroy a completed campaign point's
+    /// archive, but silently omitting the failure would misrepresent what was
+    /// recorded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_digests: Option<BTreeMap<String, String>>,
 }
@@ -71,9 +72,17 @@ fn digest_from_inspect(doc: &serde_json::Value) -> Option<String> {
 /// `podman image inspect` (argv exec, JSON read — no shell interpolation).
 /// Best-effort per image: failures are recorded as `unresolved: …` values
 /// rather than propagated, per `ArchiveMetadata::image_digests`'s contract.
+/// What a `local/...` part records: vxedge runs it as a host process (`PAYLOAD_KIND_HOST_PROCESS`),
+/// so there is no image to inspect. Distinct from `localhost/...`, a locally built Podman image.
+pub const HOST_PROCESS: &str = "host-process: a local/ part runs on the host, not from an image";
+
 pub fn resolve_image_digests(images: &[String]) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for image in images {
+        if image.starts_with("local/") {
+            out.insert(image.clone(), HOST_PROCESS.to_string());
+            continue;
+        }
         let resolved = match Command::new("podman")
             .args(["image", "inspect", image])
             .output()
@@ -230,6 +239,12 @@ mod tests {
         };
         let json = serde_json::to_value(&meta_with).unwrap();
         assert_eq!(json["image_digests"]["vx5g-core"], "abc");
+    }
+
+    #[test]
+    fn a_host_process_part_is_recorded_as_one_not_as_unresolved() {
+        let out = resolve_image_digests(&["local/vxprobe:host-process".to_string()]);
+        assert_eq!(out["local/vxprobe:host-process"], HOST_PROCESS);
     }
 
     #[test]

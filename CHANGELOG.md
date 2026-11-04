@@ -6,6 +6,16 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-04
+
+An archive tells a host process from a missing image.
+
+### Fixed
+
+- `image_digests` records a `local/...` part as a host process instead of
+  `unresolved: podman image inspect failed`, which read as missing provenance. Found in the vxedge
+  0.5.0 release gate (#17).
+
 ### Security
 
 - Lockfile update `tokio` 1.53.1 -> 1.54.1, which fixes RUSTSEC-2026-0386 (unsound `AsyncFd` constructors). This repo does not call `AsyncFd` directly.
