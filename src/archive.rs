@@ -25,6 +25,10 @@ pub struct ArchiveMetadata {
     /// hashed a §6.1 document that no longer exists; analysis notebooks reading archives from
     /// both eras should accept either key.
     pub workspace_sha256: String,
+    /// The rule that computed `workspace_sha256` (`vxws/2` today). An archive without this key
+    /// was written before `vxws/2` and holds a `vxws/1` value; identities under different
+    /// algorithms are not comparable.
+    pub workspace_identity_algorithm: String,
     /// The `.vxp` descriptor's id and version, when the workspace carries one — the identity a
     /// published experiment is cited by.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -142,6 +146,7 @@ pub fn collect(
     let metadata = ArchiveMetadata {
         experiment_id: workspace.experiment_id.clone(),
         workspace_sha256: workspace.content_sha256(),
+        workspace_identity_algorithm: workspace.identity_algorithm().to_string(),
         package: workspace.package.clone(),
         collected_at_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -222,6 +227,7 @@ mod tests {
         let meta = ArchiveMetadata {
             experiment_id: "t".into(),
             workspace_sha256: "0".repeat(64),
+            workspace_identity_algorithm: "vxws/2".into(),
             package: None,
             collected_at_unix_ms: 0,
             vxtelemetry_version: "0".into(),

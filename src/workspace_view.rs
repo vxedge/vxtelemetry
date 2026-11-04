@@ -20,7 +20,6 @@
 //! second validator that can disagree is worse than none.
 
 use serde::Deserialize;
-use sha2::Digest;
 use std::path::{Path, PathBuf};
 
 use crate::TelemetryError;
@@ -35,10 +34,9 @@ pub struct WorkspaceView {
     /// The workspace *documents* (`*.yaml`, `*.vxp`) in name order: `(name, bytes)`. Carried
     /// so the archive can record what was run from rather than a summary of it.
     pub files: Vec<(String, Vec<u8>)>,
-    /// Every file the identity covers — the documents plus the sandbox's own content
-    /// (`parts/`, `assets/`, `scripts/`, `tools/`), by relative path in sorted order,
-    /// excluding `results/`. See [`WorkspaceView::content_sha256`].
-    hashed_files: Vec<(String, Vec<u8>)>,
+    /// The workspace identity under [`crate::identity::CURRENT`], computed at load. See
+    /// [`WorkspaceView::content_sha256`].
+    identity: String,
     telemetry: Option<TelemetryBlock>,
     results: Option<ResultsBlock>,
 }
@@ -173,16 +171,14 @@ impl WorkspaceView {
             }
         };
 
-        let mut hashed_files = Vec::new();
-        collect_hashed(root, root, &mut hashed_files)?;
-        hashed_files.sort();
+        let identity = crate::identity::compute(root, crate::identity::CURRENT)?;
 
         Ok(WorkspaceView {
             root: root.to_path_buf(),
             experiment_id: experiment.id,
             package,
             files,
-            hashed_files,
+            identity,
             telemetry: experiment.telemetry,
             results: experiment.results,
         })
@@ -213,57 +209,22 @@ impl WorkspaceView {
         self.results.as_ref()?.artifact_dir.as_deref()
     }
 
-    /// **The workspace identity**, per `ARCHITECTURE.md` §13 — the one rule, implemented here
-    /// independently of `vxedge-core` and pinned to the same test vector both sides assert.
-    ///
-    /// SHA-256 over every file the experiment is made of: relative path, NUL, bytes, NUL, in
-    /// sorted path order, recursing into subdirectories but **skipping `results/`**. Outputs
-    /// are not inputs, and a sandbox's `parts/`, `assets/` and `scripts/` are what ran — a
-    /// local part that changes is a different experiment, and an identity that ignored it
-    /// would call two runs the same.
+    /// **The workspace identity**, per `ARCHITECTURE.md` §13, under
+    /// [`WorkspaceView::identity_algorithm`]. The rule lives in [`crate::identity`].
     ///
     /// It answers "did every repetition of this campaign run from the same input?" about a
     /// thing that exists. `manifest_sha256` hashed a document the daemon generated and nobody
     /// authored, so two workspaces differing in a vehicle file could hash identically if
     /// lowering flattened the difference away.
     pub fn content_sha256(&self) -> String {
-        let mut h = sha2::Sha256::new();
-        for (name, bytes) in &self.hashed_files {
-            h.update(name.as_bytes());
-            h.update([0u8]);
-            h.update(bytes);
-            h.update([0u8]);
-        }
-        // sha2 0.11 returns a `hybrid_array::Array`, which has no `LowerHex`; spell the hex out.
-        let digest = h.finalize();
-        digest.iter().map(|b| format!("{b:02x}")).collect()
+        self.identity.clone()
     }
-}
 
-/// Every file under `dir` relative to `base`, skipping `results/`. The recursion is what
-/// distinguishes the identity from the document set: a sandbox's parts and scripts are content.
-fn collect_hashed(
-    base: &Path,
-    dir: &Path,
-    out: &mut Vec<(String, Vec<u8>)>,
-) -> Result<(), TelemetryError> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        let rel = path
-            .strip_prefix(base)
-            .expect("walked path under base")
-            .to_string_lossy()
-            .replace('\\', "/");
-        if path.is_dir() {
-            if rel == "results" {
-                continue;
-            }
-            collect_hashed(base, &path, out)?;
-        } else {
-            out.push((rel, std::fs::read(&path)?));
-        }
+    /// The algorithm behind [`WorkspaceView::content_sha256`]. Recorded beside it, because
+    /// identities under different algorithms are not comparable.
+    pub fn identity_algorithm(&self) -> &'static str {
+        crate::identity::CURRENT
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -351,26 +312,19 @@ results:
         std::fs::remove_dir_all(&root).ok();
     }
 
-    /// The **shared test vector** for `ARCHITECTURE.md` §13's identity rule. `vxedge-core`
-    /// implements the same rule independently and asserts this same hash over this same
-    /// fixture — which is how two implementations of one rule stay honest without sharing code.
-    /// If this value changes, both sides move together, deliberately.
+    /// What the identity covers. The shared test vectors that pin its exact values live with
+    /// the rule, in `crate::identity`.
     #[test]
-    fn the_workspace_identity_matches_the_shared_vector() {
+    fn the_workspace_identity_covers_what_ran() {
         let root = workspace(
             "identity",
             &[("main.yaml", "kind: experiment\nid: id-test\n")],
         );
         std::fs::create_dir_all(root.join("parts")).unwrap();
         std::fs::write(root.join("parts/local-thing"), "payload\n").unwrap();
-        std::fs::create_dir_all(root.join("scripts")).unwrap();
-        std::fs::write(root.join("scripts/run.sh"), "#!/usr/bin/env bash\n").unwrap();
-
-        let id = WorkspaceView::load(&root).unwrap().content_sha256();
-        assert_eq!(
-            id, "f095a9facfabea97828ac5ee48a0da5516bfe036b546f612bcf182856db0efac",
-            "identity rule drifted from vxedge-core's"
-        );
+        let view = WorkspaceView::load(&root).unwrap();
+        assert_eq!(view.identity_algorithm(), "vxws/2");
+        let id = view.content_sha256();
 
         // Outputs are not inputs: an archive appearing must not restate the identity of the run
         // that produced it.
@@ -381,6 +335,39 @@ results:
         // A local part is part of what ran.
         std::fs::write(root.join("parts/local-thing"), "different\n").unwrap();
         assert_ne!(WorkspaceView::load(&root).unwrap().content_sha256(), id);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// G2: version-control metadata and editor droppings are not the experiment.
+    #[test]
+    fn vcs_metadata_and_editor_files_do_not_change_the_identity() {
+        let root = workspace("noise", &[("main.yaml", "kind: experiment\nid: id-test\n")]);
+        let before = WorkspaceView::load(&root).unwrap().content_sha256();
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(root.join("main.yaml~"), "backup").unwrap();
+        std::fs::write(root.join(".main.yaml.swp"), "swap").unwrap();
+        assert_eq!(WorkspaceView::load(&root).unwrap().content_sha256(), before);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// G2: a root `.vxpignore` excludes what it names, and is itself an input.
+    #[test]
+    fn vxpignore_excludes_what_it_names_and_is_itself_hashed() {
+        let root = workspace(
+            "vxpignore",
+            &[
+                ("main.yaml", "kind: experiment\nid: id-test\n"),
+                (".vxpignore", "scratch/\n*.log\n"),
+            ],
+        );
+        let before = WorkspaceView::load(&root).unwrap().content_sha256();
+        std::fs::create_dir_all(root.join("scratch")).unwrap();
+        std::fs::write(root.join("scratch/junk"), "local build output").unwrap();
+        std::fs::write(root.join("build.log"), "noise").unwrap();
+        assert_eq!(WorkspaceView::load(&root).unwrap().content_sha256(), before);
+        std::fs::write(root.join(".vxpignore"), "scratch/\n").unwrap();
+        assert_ne!(WorkspaceView::load(&root).unwrap().content_sha256(), before);
         std::fs::remove_dir_all(&root).ok();
     }
 

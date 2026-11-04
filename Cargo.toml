@@ -15,6 +15,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
 sha2 = "0.11"
+# `.vxpignore` matching for the workspace identity (`vxws/2`): the gitignore matcher only, never
+# its directory walker, which reads global and environment ignore rules.
+ignore = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 regex-lite = "0.1"
 thiserror = "2"

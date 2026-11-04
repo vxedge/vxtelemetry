@@ -9,6 +9,7 @@
 //! rather than depending on `vxedge-core`.
 
 pub mod archive;
+pub mod identity;
 pub mod ingest;
 pub mod promtext;
 pub mod sample;
