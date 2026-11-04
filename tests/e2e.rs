@@ -91,6 +91,7 @@ async fn ingest_then_collect_roundtrip() {
     let metadata = archive::collect(&view, &ingest_dir, &out, None).unwrap();
     assert_eq!(metadata.experiment_id, "exp-e2e");
     assert_eq!(metadata.workspace_sha256.len(), 64);
+    assert_eq!(metadata.workspace_identity_algorithm, "vxws/2");
     assert_eq!(metadata.package.as_ref().unwrap().id, "exp-e2e");
     assert!(metadata.image_digests.is_none());
 

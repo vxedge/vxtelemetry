@@ -6,6 +6,16 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The workspace identity in `metadata.json` is now computed under `vxws/2` (`ARCHITECTURE.md`
+  §13). It skips `.git` at any depth, editor swap and backup files, and whatever a root
+  `.vxpignore` names in `.gitignore` syntax; `results/` and `.git` cannot be re-included, and
+  `.vxpignore` is itself hashed. Values differ from 0.2.1's by design.
+- `metadata.json` gains `workspace_identity_algorithm`. An archive without it was written before
+  `vxws/2` and holds a `vxws/1` value, which `identity::compute(root, "vxws/1")` still
+  reproduces. Both rules are pinned to the same test vectors as `vxedge-core`.
+
 ## [0.2.1] - 2026-11-04
 
 An archive tells a host process from a missing image.
