@@ -6,6 +6,12 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Changed
+
+- A workspace's `vxp.yaml` (the `vxp/1` package descriptor, vxedge 0.6.0) is read as the package
+  the archive records, not as a document, so a `vxp/1` workspace no longer fails with ``missing
+  field `kind` ``. Legacy `<name>.vxp` descriptors are read as before.
+
 ## [0.3.0] - 2026-11-04
 
 An archive is enough to check a run and to re-run it. It now carries every file the workspace
