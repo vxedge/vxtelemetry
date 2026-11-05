@@ -24,6 +24,9 @@ use std::path::{Path, PathBuf};
 
 use crate::TelemetryError;
 
+/// The `vxp/1` package descriptor's fixed name; the same string as in `vxedge-core`.
+pub const DESCRIPTOR_FILE: &str = "vxp.yaml";
+
 /// A loaded workspace, reduced to what telemetry acts on.
 #[derive(Debug)]
 pub struct WorkspaceView {
@@ -100,7 +103,8 @@ pub struct ResultsBlock {
 
 impl WorkspaceView {
     /// Read a workspace directory: every `*.yaml` (non-recursive, as `vxedge-core` does — a
-    /// `results/` archive containing YAML must not join the experiment) plus the `.vxp`.
+    /// `results/` archive containing YAML must not join the experiment) plus the descriptor,
+    /// `vxp.yaml` or a legacy `<name>.vxp`.
     pub fn load(root: &Path) -> Result<Self, TelemetryError> {
         let bad = |msg: String| TelemetryError::Manifest(msg);
         if !root.is_dir() {
@@ -136,7 +140,9 @@ impl WorkspaceView {
                 .to_string_lossy()
                 .to_string();
 
-            if path.extension().and_then(|e| e.to_str()) == Some("vxp") {
+            // The descriptor: `vxp.yaml` (vxedge 0.6.0, `ARCHITECTURE.md` §6.0.3), or a legacy
+            // `<name>.vxp`. It is not a document, so it never reaches the `kind` parse below.
+            if name == DESCRIPTOR_FILE || path.extension().and_then(|e| e.to_str()) == Some("vxp") {
                 package = serde_yaml_ng::from_slice::<PackageIdentity>(&bytes).ok();
                 continue;
             }
@@ -275,6 +281,34 @@ results:
             Some(PackageIdentity {
                 id: "exp-001".into(),
                 version: Some("0.1.0".into())
+            })
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// A `vxp/1` package (vxedge 0.6.0): `vxp.yaml` is the descriptor, not a document, and it
+    /// names the package the archive records.
+    #[test]
+    fn a_vxp_yaml_descriptor_is_read_as_the_package_not_as_a_document() {
+        let root = workspace(
+            "vxp-yaml",
+            &[
+                ("main.yaml", MAIN),
+                ("vehicle.yaml", VEHICLE),
+                (
+                    "vxp.yaml",
+                    "schema: vxp/1\nid: vxedge/exp-001\nversion: 1.2.0\nentry: main.yaml\n\
+                     x-oem: { a: 1 }\n",
+                ),
+            ],
+        );
+        let v = WorkspaceView::load(&root).unwrap();
+        assert_eq!(v.experiment_id, "exp-001");
+        assert_eq!(
+            v.package,
+            Some(PackageIdentity {
+                id: "vxedge/exp-001".into(),
+                version: Some("1.2.0".into())
             })
         );
         std::fs::remove_dir_all(&root).ok();
