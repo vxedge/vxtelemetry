@@ -23,6 +23,7 @@ All notable changes to this repo are documented here. Format follows
 
 ### Changed
 
+- Lockfile update: the semver-compatible dependency updates `cargo update` offers (31 crates). No `Cargo.toml` change and no source change; build, test, clippy `-D warnings`, fmt and `cargo deny` pass.
 - The toolchain moves from Rust 1.96.1 to 1.99.1 (`rust-toolchain.toml`, `rust-version` 1.99). Build, test, clippy `-D warnings`, fmt and `cargo deny` pass unchanged; no source changes were needed.
 - A workspace's `vxp.yaml` (the `vxp/1` package descriptor, vxedge 0.6.0) is read as the package
   the archive records, not as a document, so a `vxp/1` workspace no longer fails with ``missing
