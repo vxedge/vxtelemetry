@@ -66,6 +66,12 @@ enum Cmd {
         /// tool doesn't guess.
         #[arg(long = "record-image")]
         record_images: Vec<String>,
+        /// Whether the daemon checked the package's lock at `up` (`false` for `up --unlocked`),
+        /// recorded as `package.locked` for a `vxp/1` package. Left out, nothing is recorded:
+        /// this tool never derives it. The daemon passes it in the environment, so an older
+        /// vxtelemetry without this option still collects.
+        #[arg(long, env = "VXTELEMETRY_PACKAGE_LOCKED")]
+        package_locked: Option<bool>,
     },
     /// Re-hash an archive's `workspace/` under its recorded algorithm and compare with its
     /// recorded `workspace_sha256`. Prints the result as JSON; exits 1 on a mismatch.
@@ -134,9 +140,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ingest_dir,
             out,
             record_images,
+            package_locked,
         } => {
             let metadata = tokio::task::spawn_blocking(move || {
-                let view = WorkspaceView::load(&workspace)?;
+                let mut view = WorkspaceView::load(&workspace)?;
+                if let Some(p) = view.package.as_mut().filter(|p| p.digest.is_some()) {
+                    p.locked = package_locked;
+                }
                 let image_digests = if record_images.is_empty() {
                     None
                 } else {

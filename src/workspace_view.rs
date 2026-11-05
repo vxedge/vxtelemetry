@@ -45,11 +45,23 @@ pub struct WorkspaceView {
     results: Option<ResultsBlock>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct PackageIdentity {
     pub id: String,
     #[serde(default)]
     pub version: Option<String>,
+    /// The package digest (`ARCHITECTURE.md` §6.0.7), computed here from the identity inputs for
+    /// a `vxp/1` package. `None` for a legacy descriptor, which has no packed form. Never read
+    /// from the descriptor.
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+    /// Whether the daemon checked the package's lock at `up`, as it told `collect`. `None` when
+    /// it said nothing: this tool never derives it.
+    #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub locked: Option<bool>,
+    /// The descriptor's `schema`: `vxp/1`, or none for a legacy descriptor.
+    #[serde(default, skip_serializing)]
+    pub schema: Option<String>,
 }
 
 /// Enough of any workspace document to route it, matching `vxedge-core`'s own loader: every
@@ -175,6 +187,12 @@ impl WorkspaceView {
 
         let inputs = crate::identity::read_inputs(root, crate::identity::CURRENT)?;
         let identity = crate::identity::digest(crate::identity::CURRENT, &inputs)?;
+        if let Some(p) = package
+            .as_mut()
+            .filter(|p| p.schema.as_deref() == Some("vxp/1"))
+        {
+            p.digest = Some(crate::package::digest(&inputs)?);
+        }
 
         Ok(WorkspaceView {
             root: root.to_path_buf(),
@@ -280,8 +298,10 @@ results:
             v.package,
             Some(PackageIdentity {
                 id: "exp-001".into(),
-                version: Some("0.1.0".into())
-            })
+                version: Some("0.1.0".into()),
+                ..Default::default()
+            }),
+            "a legacy descriptor has no package digest"
         );
         std::fs::remove_dir_all(&root).ok();
     }
@@ -308,9 +328,16 @@ results:
             v.package,
             Some(PackageIdentity {
                 id: "vxedge/exp-001".into(),
-                version: Some("1.2.0".into())
+                version: Some("1.2.0".into()),
+                digest: Some(crate::package::digest(&v.inputs).unwrap()),
+                locked: None,
+                schema: Some("vxp/1".into()),
             })
         );
+        let recorded = serde_json::to_value(v.package.as_ref().unwrap()).unwrap();
+        assert!(recorded["digest"].as_str().unwrap().starts_with("sha256:"));
+        assert!(recorded.get("locked").is_none(), "never guessed");
+        assert!(recorded.get("schema").is_none());
         std::fs::remove_dir_all(&root).ok();
     }
 

@@ -52,6 +52,41 @@ pub struct ArchiveMetadata {
     /// recorded.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image_digests: Option<BTreeMap<String, String>>,
+    /// The kernel of the host that collected, which is the run's host (`ARCHITECTURE.md` §13):
+    /// `kernel.preempt_rt: preferred` runs on either kind, so the result says which. Absent in
+    /// archives from before it was recorded, and where the kernel cannot be read.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kernel: Option<Kernel>,
+}
+
+/// The running kernel, read the way `vxedge-core` reads it and independently of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Kernel {
+    /// As `uname -r` prints it.
+    pub release: String,
+    pub preempt_rt: bool,
+}
+
+impl Kernel {
+    /// `None` where `/proc/sys/kernel/osrelease` cannot be read, which is not Linux.
+    pub fn probe() -> Option<Self> {
+        let read = |path: &str| std::fs::read_to_string(path).ok();
+        let release = read("/proc/sys/kernel/osrelease")?.trim().to_string();
+        let version = read("/proc/sys/kernel/version").unwrap_or_default();
+        Some(Self {
+            release,
+            preempt_rt: is_preempt_rt(read("/sys/kernel/realtime").as_deref(), &version),
+        })
+    }
+}
+
+/// `/sys/kernel/realtime` decides when present; a kernel without it says so only in its version
+/// string (`uname -v`). Pure.
+fn is_preempt_rt(realtime: Option<&str>, version: &str) -> bool {
+    match realtime {
+        Some(flag) => flag.trim() == "1",
+        None => version.contains("PREEMPT_RT"),
+    }
 }
 
 /// Pull the content-addressed identity out of one `podman image inspect`
@@ -157,6 +192,7 @@ pub fn collect(
         vxtelemetry_version: env!("CARGO_PKG_VERSION").to_string(),
         ingest: ingest_stats,
         image_digests,
+        kernel: Kernel::probe(),
     };
 
     if let Some(parent) = out.parent() {
@@ -190,15 +226,25 @@ pub fn collect(
 }
 
 /// What [`verify`] found: the identity the archive records and the one its `workspace/`
-/// re-hashes to.
+/// re-hashes to, and the same for the package digest when the archive records one.
 #[derive(Debug, Serialize)]
 pub struct Verification {
+    /// Both the identity and, when recorded, the package digest match.
     pub ok: bool,
     pub algorithm: String,
     pub recorded: String,
     pub computed: String,
     /// Files under `workspace/`.
     pub files: usize,
+    /// Present when `metadata.json` records `package.digest` (a `vxp/1` package).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_digest: Option<DigestCheck>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DigestCheck {
+    pub recorded: String,
+    pub computed: String,
 }
 
 /// Re-hash an archive's `workspace/` under its recorded algorithm and compare with its recorded
@@ -256,12 +302,24 @@ pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
     }
     inputs.sort();
     let computed = crate::identity::digest(&algorithm, &inputs)?;
+    // `workspace/` holds exactly the packed entries, so it packs to the recorded digest.
+    let package_digest = match metadata["package"]["digest"].as_str() {
+        Some(recorded) => Some(DigestCheck {
+            recorded: recorded.to_string(),
+            computed: crate::package::digest(&inputs)?,
+        }),
+        None => None,
+    };
     Ok(Verification {
-        ok: computed == recorded,
+        ok: computed == recorded
+            && package_digest
+                .as_ref()
+                .is_none_or(|d| d.recorded == d.computed),
         algorithm,
         recorded,
         computed,
         files: inputs.len(),
+        package_digest,
     })
 }
 
@@ -313,6 +371,7 @@ mod tests {
             vxtelemetry_version: "0".into(),
             ingest: None,
             image_digests: None,
+            kernel: None,
         };
         let json = serde_json::to_value(&meta).unwrap();
         assert!(json.get("image_digests").is_none());
@@ -464,5 +523,82 @@ mod tests {
         let err = verify(&old).unwrap_err().to_string();
         assert!(err.contains("workspace_identity_algorithm"), "{err}");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A `vxp/1` package's archive records its package digest and the kernel, and `verify`
+    /// re-packs `workspace/` to the recorded digest: the bytes shipped are the package shared.
+    #[test]
+    fn a_vxp1_archive_records_and_verifies_its_package_digest() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-pkgdigest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        for (rel, body) in [
+            ("main.yaml", "kind: experiment\nid: exp-pd\n"),
+            (
+                "vxp.yaml",
+                "schema: vxp/1\nid: vxedge/exp-pd\nversion: 1.0.0\nentry: main.yaml\n",
+            ),
+            ("vxp.lock", "schema: vxp-lock/1\n"),
+        ] {
+            std::fs::create_dir_all(&ws).unwrap();
+            std::fs::write(ws.join(rel), body).unwrap();
+        }
+        let ingest = tmp.join("ingest");
+        std::fs::create_dir_all(&ingest).unwrap();
+        let mut view = WorkspaceView::load(&ws).unwrap();
+        view.package.as_mut().unwrap().locked = Some(false);
+        let out = tmp.join("exp-pd.zip");
+        let meta = collect(&view, &ingest, &out, None).unwrap();
+        let package = meta.package.as_ref().unwrap();
+        let digest = crate::package::digest(&view.inputs).unwrap();
+        assert_eq!(package.digest.as_deref(), Some(digest.as_str()));
+        assert_eq!(package.locked, Some(false));
+        #[cfg(target_os = "linux")]
+        assert!(!meta.kernel.as_ref().unwrap().release.is_empty());
+
+        let v = verify(&out).unwrap();
+        assert!(v.ok, "{v:?}");
+        assert_eq!(v.package_digest.as_ref().unwrap().computed, digest);
+
+        // A recorded digest the workspace does not pack to fails, even with the identity intact.
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+        for i in 0..zip.len() {
+            let mut e = zip.by_index(i).unwrap();
+            let mut bytes = Vec::new();
+            std::io::Read::read_to_end(&mut e, &mut bytes).unwrap();
+            entries.push((e.name().unwrap().to_string(), bytes));
+        }
+        let forged = tmp.join("forged.zip");
+        let entries: Vec<(String, Vec<u8>)> = entries
+            .into_iter()
+            .map(|(n, b)| {
+                if n == "metadata.json" {
+                    let text = String::from_utf8(b)
+                        .unwrap()
+                        .replace(&digest, &format!("sha256:{}", "0".repeat(64)));
+                    (n, text.into_bytes())
+                } else {
+                    (n, b)
+                }
+            })
+            .collect();
+        let refs: Vec<(&str, &[u8])> = entries
+            .iter()
+            .map(|(n, b)| (n.as_str(), b.as_slice()))
+            .collect();
+        zip_with(&forged, &refs);
+        let v = verify(&forged).unwrap();
+        assert!(!v.ok, "{v:?}");
+        assert_eq!(v.recorded, v.computed, "the identity alone still matches");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn a_realtime_kernel_is_read_from_sysfs_first() {
+        assert!(is_preempt_rt(Some("1\n"), ""));
+        assert!(!is_preempt_rt(Some("0\n"), "#1 SMP PREEMPT_RT"));
+        assert!(is_preempt_rt(None, "#1 SMP PREEMPT_RT Thu"));
+        assert!(!is_preempt_rt(None, "#1 SMP PREEMPT_DYNAMIC"));
     }
 }
