@@ -11,7 +11,15 @@ All notable changes to this repo are documented here. Format follows
 - `package::digest`, the package digest of a `vxp/1` package (`ARCHITECTURE.md` §6.0.7), computed
   from its identity inputs independently of vxedge. It agrees with vxedge on both packed-bytes test
   vectors, which cover long paths split at the shortest prefix, and with Python's `tarfile`.
-  Nothing records it yet; `metadata.json` gains it with the run records.
+- `metadata.json` records what a run of a `vxp/1` package came from and ran on
+  (`ARCHITECTURE.md` §13): `package.digest`, computed from the archived inputs; `package.locked`,
+  only when the daemon says whether `up` checked the lock (`--package-locked`, or
+  `VXTELEMETRY_PACKAGE_LOCKED` from the daemon), never derived; and `kernel` (`release`,
+  `preempt_rt`) of the collecting host, the run's host, for every archive. A legacy descriptor
+  records no digest.
+- `vxtelemetry verify` re-packs `workspace/` and compares it with `package.digest` when the archive
+  records one; `ok` needs both the identity and the digest to match. Archives without a digest
+  verify as before.
 
 ### Changed
 
