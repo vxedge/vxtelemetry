@@ -6,6 +6,13 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `package::digest`, the package digest of a `vxp/1` package (`ARCHITECTURE.md` §6.0.7), computed
+  from its identity inputs independently of vxedge. It agrees with vxedge on both packed-bytes test
+  vectors, which cover long paths split at the shortest prefix, and with Python's `tarfile`.
+  Nothing records it yet; `metadata.json` gains it with the run records.
+
 ### Changed
 
 - A workspace's `vxp.yaml` (the `vxp/1` package descriptor, vxedge 0.6.0) is read as the package
