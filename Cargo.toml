@@ -4,7 +4,7 @@ description = "vxedge telemetry: scrape agent metrics per experiment manifest, a
 publish = false
 version = "0.3.0"
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.99"
 license = "Apache-2.0"
 repository = "https://github.com/vxedge/vxtelemetry"
 
