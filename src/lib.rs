@@ -11,6 +11,7 @@
 pub mod archive;
 pub mod identity;
 pub mod ingest;
+pub mod package;
 pub mod promtext;
 pub mod sample;
 pub mod scrape;
