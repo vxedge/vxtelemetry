@@ -6,6 +6,15 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-06
+
+An archive of a `vxp/1` package now names the package by its digest and can prove it.
+`metadata.json` records `package.digest`, computed here independently of vxedge, whether the run
+checked its lock (`package.locked`, as vxedge 0.7.0 reports it), and the kernel the run ran on.
+`vxtelemetry verify` re-packs the archived workspace and checks the digest as well as the identity.
+vxtelemetry and vxedge agree on both packed-bytes test vectors and with Python's `tarfile`. An
+archive without a digest verifies as before. Also the Rust 1.99.1 toolchain.
+
 ### Added
 
 - `package::digest`, the package digest of a `vxp/1` package (`ARCHITECTURE.md` §6.0.7), computed
