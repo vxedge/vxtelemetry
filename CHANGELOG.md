@@ -12,6 +12,9 @@ All notable changes to this repo are documented here. Format follows
   `sample` record per value (`ts_ns`, `entity`, `metric`, `labels` as a map, `value`), named by the
   entity `entities.json` binds the target to (`host` otherwise), and a `gap` record for a required
   target that did not answer. `samples.jsonl` keeps its v1 shape.
+- A target that serves many entities, such as vxedged's own exporter, names each sample's entity
+  in an `entity` label, which wins over the target's entity and is dropped from `labels`. Ingest
+  also scrapes the targets `entities.json` lists beside the workspace's own, as optional targets.
 - Archive v2, `vxtelemetry collect --archive-version 2` (or `VXTELEMETRY_ARCHIVE_VERSION=2`): a zip
   with `index.json` (schema `vxarchive/2`, every member with its size and sha256), `metadata.json`,
   `package/` (the identity inputs), `entities.json`, `metrics/samples.jsonl.zst` (samples and gaps,

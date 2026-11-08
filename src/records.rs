@@ -71,6 +71,11 @@ impl Entities {
         Self { by_target }
     }
 
+    /// Every target the list binds.
+    pub fn targets(&self) -> impl Iterator<Item = &str> {
+        self.by_target.keys().map(String::as_str)
+    }
+
     pub fn of(&self, target: &str) -> &str {
         self.by_target.get(target).map_or(HOST, String::as_str)
     }

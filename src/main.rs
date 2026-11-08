@@ -108,7 +108,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             duration_s,
         } => {
             let view = WorkspaceView::load(&workspace)?;
-            let targets = view.scrape_targets();
+            let mut targets = view.scrape_targets();
+            // Targets the daemon added beside the workspace's own, such as its exporter of
+            // per-zone and per-slice metrics, are listed in `entities.json`. They are optional:
+            // a run without them is not incomplete.
+            for extra in vxtelemetry::records::Entities::load(&ingest_dir).targets() {
+                if !targets.iter().any(|t| t.address == extra) {
+                    targets.push(vxtelemetry::workspace_view::ScrapeTarget {
+                        address: extra.to_string(),
+                        optional: true,
+                    });
+                }
+            }
             if targets.is_empty() {
                 return Err("the workspace declares no telemetry.prometheus.scrape_targets".into());
             }

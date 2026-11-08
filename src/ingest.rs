@@ -118,11 +118,17 @@ async fn scrape_round_into(
                 let entity = entities.of(&target.address);
                 for s in promtext::parse(&body) {
                     stats.samples_total += 1;
+                    // A target serving many entities (vxedged's own exporter) names each
+                    // sample's entity in an `entity` label, which wins over the target's.
+                    let mut labels = crate::records::parse_labels(&s.labels);
+                    let entity = labels
+                        .remove("entity")
+                        .unwrap_or_else(|| entity.to_string());
                     let rec = crate::records::Record::Sample {
                         ts_ns,
-                        entity: entity.to_string(),
+                        entity,
                         metric: s.metric.clone(),
-                        labels: crate::records::parse_labels(&s.labels),
+                        labels,
                         value: s.value,
                     };
                     v2.push_str(&serde_json::to_string(&rec).expect("serializable record"));
@@ -282,7 +288,7 @@ mod tests {
         let ok_addr = listener.local_addr().unwrap().to_string();
         tokio::spawn(serve_once(
             listener,
-            "vxtest_rtt_seconds{quantile=\"0.99\"} 0.5\n",
+            "vxtest_rtt_seconds{quantile=\"0.99\"} 0.5\nvxedge_node_cpu_seconds_total{entity=\"car/_/hpc1\"} 3\n",
         ));
         let dead = dead_addr().await;
         let dir = tmp_dir("records").await;
@@ -316,7 +322,12 @@ mod tests {
             "{recs:?}"
         );
         assert!(
-            matches!(&recs[1], crate::records::Record::Gap { entity, .. } if entity == "host"),
+            matches!(&recs[1], crate::records::Record::Sample { entity, labels, .. }
+            if entity == "car/_/hpc1" && !labels.contains_key("entity")),
+            "{recs:?}"
+        );
+        assert!(
+            matches!(&recs[2], crate::records::Record::Gap { entity, .. } if entity == "host"),
             "{recs:?}"
         );
         std::fs::remove_dir_all(&dir).ok();
