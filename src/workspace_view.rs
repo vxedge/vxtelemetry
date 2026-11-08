@@ -2,7 +2,7 @@
 //!
 //! This replaces the §6.1 `ManifestView` and is the change that cuts the last tie to §6.1 —
 //! `vxedge-core`'s `lower.rs` existed only so the daemon could hand this tool a §6.1 file to
-//! read (`vxedge/TASKS.md`, task 5f).
+//! read.
 //!
 //! # Why this parses the workspace itself rather than depending on `vxedge-core`
 //!
