@@ -1,6 +1,6 @@
 ---
 name: testbed-quality
-description: The OEM-adoption quality bar for vxedge — use when designing features, APIs, manifests, docs, or releases anywhere in the workspace. Encodes what makes automotive teams (BMW/Mercedes/Toyota/Tesla/Rivian-class) trust and adopt an external testbed.
+description: The OEM-adoption quality bar for vxedge — use when designing features, APIs, manifests, docs, or releases anywhere in the workspace. Encodes what makes automotive teams trust and adopt an external testbed.
 ---
 
 # Testbed quality — the OEM-adoption bar
@@ -23,7 +23,7 @@ legible in their vocabulary**. Every feature is judged against those four proper
 ## 2. Fidelity honesty (credibility is compounding)
 
 - Call the platform an **executable virtual prototype / all-software SDV testbed** — the
-  word "twin" is reserved for hardware-in-the-loop parity (phase 4) or explicit vendor-twin
+  word "twin" is reserved for hardware-in-the-loop parity or explicit vendor-twin
   claims (Snapdragon vSoC, Mcity). Overclaiming once costs more than underclaiming always.
 - Known gaps are stated where users will see them: QNX-as-guest inversion, shared-host
   gateway, userspace timestamps, non-PREEMPT_RT kernels. New features add their caveats to
@@ -43,13 +43,12 @@ legible in their vocabulary**. Every feature is judged against those four proper
 ## 4. OEM legibility (speak their standards)
 
 - Vehicle signals follow **COVESA VSS**; in-vehicle comms map to Zenoh/uProtocol/DDS; test
-  bench boundaries aim at **ASAM OSI/FMI/XIL** (phase 3–4). When adding a domain concept,
-  check whether a standard already names it — adopt the standard's name.
+  bench boundary names follow **ASAM OSI/FMI/XIL**. When adding a domain concept, check
+  whether a standard already names it — adopt the standard's name.
 - Zonal vocabulary is fixed: the six roles (`front-left` … `gateway`) and E/E terms from
   ARCHITECTURE §3. Don't invent synonyms.
 - Every subsystem states its production counterpart (vxgateway ↔ zonal gateway silicon,
-  SONiC-VS ↔ production NOS, vSoC/Graviton ↔ cloud virtual ECUs) — that mapping is the
-  pitch an OEM engineer repeats internally.
+  SONiC-VS ↔ production NOS, vSoC/Graviton ↔ cloud virtual ECUs).
 
 ## 5. Supply-chain & security posture
 
@@ -59,11 +58,12 @@ legible in their vocabulary**. Every feature is judged against those four proper
 - License hygiene: MIT/Apache-2.0 for our code; never commit licensed vendor artifacts
   (QNX, AAOS) — recipes only.
 
-## 6. Documentation currency (the adoption funnel)
+## 6. Documentation currency
 
-- `docs/ROADMAP.md` (phase status, open work) and `docs/RESULTS.md` (verdicts, numbers,
-  caveats) are updated at phase boundaries, not every push. `docs/TESTBED-SETUP.md` is the single host-requirements truth ("anything the testbed
+- `docs/RESULTS.md` (verdicts, numbers, caveats) is updated at phase boundaries, not every
+  push. `docs/TESTBED-SETUP.md` is the single host-requirements truth ("anything the testbed
   needs that it doesn't list is a bug in it"); GETTING-STARTED must always work top-to-bottom
   on a clean machine.
-- A feature isn't done until its board item is checked and its docs are current — same
-  change set, not a follow-up.
+- Work items are tracked on the maintainers' internal board; the public record of changes is
+  `CHANGELOG.md`. A feature isn't done until its board item is closed and its docs are
+  current, in the same change set.
