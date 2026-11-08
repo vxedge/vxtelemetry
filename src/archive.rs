@@ -22,6 +22,9 @@ use crate::workspace_view::{PackageIdentity, WorkspaceView};
 
 #[derive(Serialize)]
 pub struct ArchiveMetadata {
+    /// `vxarchive/2` for an archive v2; absent in v1, whose shape is unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub archive: Option<String>,
     pub experiment_id: String,
     /// SHA-256 over every file of the source workspace. Replaces `manifest_sha256`, which
     /// hashed a §6.1 document that no longer exists; analysis notebooks reading archives from
@@ -167,20 +170,17 @@ fn walk(
     Ok(())
 }
 
-/// Create `out` (zip) from the ingest dir + the source workspace + metadata.
-pub fn collect(
+/// The metadata an archive of `workspace` and `ingest_dir` records, v1 or v2.
+pub(crate) fn metadata_for(
     workspace: &WorkspaceView,
     ingest_dir: &Path,
-    out: &Path,
     image_digests: Option<BTreeMap<String, String>>,
-) -> Result<ArchiveMetadata, TelemetryError> {
-    let arch_err = |e: zip::result::ZipError| TelemetryError::Archive(e.to_string());
-
+) -> ArchiveMetadata {
     let ingest_stats: Option<IngestStats> = std::fs::read(ingest_dir.join("ingest-stats.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok());
-
-    let metadata = ArchiveMetadata {
+    ArchiveMetadata {
+        archive: None,
         experiment_id: workspace.experiment_id.clone(),
         workspace_sha256: workspace.content_sha256(),
         workspace_identity_algorithm: workspace.identity_algorithm().to_string(),
@@ -193,7 +193,18 @@ pub fn collect(
         ingest: ingest_stats,
         image_digests,
         kernel: Kernel::probe(),
-    };
+    }
+}
+
+/// Create `out` (zip) from the ingest dir + the source workspace + metadata.
+pub fn collect(
+    workspace: &WorkspaceView,
+    ingest_dir: &Path,
+    out: &Path,
+    image_digests: Option<BTreeMap<String, String>>,
+) -> Result<ArchiveMetadata, TelemetryError> {
+    let arch_err = |e: zip::result::ZipError| TelemetryError::Archive(e.to_string());
+    let metadata = metadata_for(workspace, ingest_dir, image_digests);
 
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)?;
@@ -363,6 +374,7 @@ mod tests {
         // Archives that predate --record-image must keep an identical
         // metadata.json shape — absent, not null.
         let meta = ArchiveMetadata {
+            archive: None,
             experiment_id: "t".into(),
             workspace_sha256: "0".repeat(64),
             workspace_identity_algorithm: "vxws/2".into(),

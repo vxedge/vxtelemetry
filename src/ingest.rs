@@ -62,12 +62,40 @@ fn now_ms() -> i64 {
 }
 
 /// One scrape round across all targets. Failures are counted, not fatal.
+///
+/// Besides `samples.jsonl` (the v1 shape), each round appends v2 records to `records.jsonl`
+/// (`ARCHITECTURE.md` §12): a `sample` per value, named by the entity `entities.json` binds the
+/// target to, and a `gap` for a required target that did not answer, spanning the round.
 pub async fn scrape_round(
     targets: &[ScrapeTarget],
     ingest_dir: &Path,
     stats: &mut IngestStats,
 ) -> Result<(), TelemetryError> {
+    scrape_round_into(
+        targets,
+        ingest_dir,
+        stats,
+        &crate::records::Entities::load(ingest_dir),
+        Duration::from_secs(1),
+    )
+    .await
+}
+
+async fn scrape_round_into(
+    targets: &[ScrapeTarget],
+    ingest_dir: &Path,
+    stats: &mut IngestStats,
+    entities: &crate::records::Entities,
+    interval: Duration,
+) -> Result<(), TelemetryError> {
     let ts = now_ms();
+    let ts_ns = ts * 1_000_000;
+    let mut records = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(ingest_dir.join("records.jsonl"))
+        .await?;
+    let mut v2 = String::new();
     let samples_path = ingest_dir.join("samples.jsonl");
     let mut samples_file = tokio::fs::OpenOptions::new()
         .create(true)
@@ -87,8 +115,18 @@ pub async fn scrape_round(
                 tokio::fs::create_dir_all(&raw_dir).await?;
                 tokio::fs::write(raw_dir.join(format!("{ts}.prom")), &body).await?;
                 let mut lines = String::new();
+                let entity = entities.of(&target.address);
                 for s in promtext::parse(&body) {
                     stats.samples_total += 1;
+                    let rec = crate::records::Record::Sample {
+                        ts_ns,
+                        entity: entity.to_string(),
+                        metric: s.metric.clone(),
+                        labels: crate::records::parse_labels(&s.labels),
+                        value: s.value,
+                    };
+                    v2.push_str(&serde_json::to_string(&rec).expect("serializable record"));
+                    v2.push('\n');
                     let record = SampleRecord {
                         ts_unix_ms: ts,
                         target: &target.address,
@@ -106,11 +144,21 @@ pub async fn scrape_round(
                     stats.optional_scrapes_failed += 1;
                 } else {
                     stats.scrapes_failed += 1;
+                    let rec = crate::records::Record::Gap {
+                        entity: entities.of(&target.address).to_string(),
+                        metric: None,
+                        from_ns: ts_ns,
+                        to_ns: ts_ns + interval.as_nanos() as i64,
+                        reason: format!("scrape of {} failed: {e}", target.address),
+                    };
+                    v2.push_str(&serde_json::to_string(&rec).expect("serializable record"));
+                    v2.push('\n');
                 }
                 tracing::warn!(target = %target.address, error = %e, optional = target.optional, "scrape failed");
             }
         }
     }
+    records.write_all(v2.as_bytes()).await?;
     stats.rounds += 1;
     Ok(())
 }
@@ -130,10 +178,11 @@ pub async fn run_ingest(
     // sample.rs's loop so ingest and sample cover the same window instead of
     // ingest finishing early and silently missing scrapes near the end.
     let rounds = (duration.as_secs() / interval.as_secs().max(1)).max(1);
+    let entities = crate::records::Entities::load(&ingest_dir);
     let mut ticker = tokio::time::interval(interval);
     for _ in 0..=rounds {
         ticker.tick().await;
-        scrape_round(targets, &ingest_dir, &mut stats).await?;
+        scrape_round_into(targets, &ingest_dir, &mut stats, &entities, interval).await?;
     }
     tokio::fs::write(
         ingest_dir.join("ingest-stats.json"),
@@ -223,5 +272,53 @@ mod tests {
         assert_eq!(stats.completeness_pct(), 0.0);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Each round also writes v2 records: samples named by the entity `entities.json` binds the
+    /// target to, and a gap for a required target that did not answer.
+    #[tokio::test]
+    async fn a_round_writes_entity_samples_and_gaps() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ok_addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(serve_once(
+            listener,
+            "vxtest_rtt_seconds{quantile=\"0.99\"} 0.5\n",
+        ));
+        let dead = dead_addr().await;
+        let dir = tmp_dir("records").await;
+        std::fs::write(
+            dir.join("entities.json"),
+            format!(
+                r#"[{{"path":"car/front/ecu1","kind":"node","scrape_targets":["{ok_addr}"]}}]"#
+            ),
+        )
+        .unwrap();
+        let targets = vec![
+            ScrapeTarget {
+                address: ok_addr,
+                optional: false,
+            },
+            ScrapeTarget {
+                address: dead,
+                optional: false,
+            },
+        ];
+        let mut stats = IngestStats::default();
+        scrape_round(&targets, &dir, &mut stats).await.unwrap();
+        let text = std::fs::read_to_string(dir.join("records.jsonl")).unwrap();
+        let recs: Vec<crate::records::Record> = text
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        assert!(
+            matches!(&recs[0], crate::records::Record::Sample { entity, labels, .. }
+            if entity == "car/front/ecu1" && labels["quantile"] == "0.99"),
+            "{recs:?}"
+        );
+        assert!(
+            matches!(&recs[1], crate::records::Record::Gap { entity, .. } if entity == "host"),
+            "{recs:?}"
+        );
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

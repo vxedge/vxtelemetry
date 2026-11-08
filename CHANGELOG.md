@@ -6,6 +6,21 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Telemetry records (`ARCHITECTURE.md` §12): each ingest round also appends to `records.jsonl` a
+  `sample` record per value (`ts_ns`, `entity`, `metric`, `labels` as a map, `value`), named by the
+  entity `entities.json` binds the target to (`host` otherwise), and a `gap` record for a required
+  target that did not answer. `samples.jsonl` keeps its v1 shape.
+- Archive v2, `vxtelemetry collect --archive-version 2` (or `VXTELEMETRY_ARCHIVE_VERSION=2`): a zip
+  with `index.json` (schema `vxarchive/2`, every member with its size and sha256), `metadata.json`,
+  `package/` (the identity inputs), `entities.json`, `metrics/samples.jsonl.zst` (samples and gaps,
+  zstd) and `phases.jsonl`. It leaves out the raw ingest folder. Python's standard library reads it
+  from 3.14 (`zipfile`, `compression.zstd`). v1 stays the default.
+- `vxtelemetry verify` checks a v2 archive's index too: a changed, added or missing member fails
+  it. `vxtelemetry records <archive>` prints the records of a v1 or v2 archive as JSON Lines; a v1
+  archive's samples read as `sample` records.
+
 ## [0.4.0] - 2026-11-06
 
 An archive of a `vxp/1` package now names the package by its digest and can prove it.
