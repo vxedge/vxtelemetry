@@ -223,8 +223,10 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    async fn serve_once(listener: TcpListener, body: &'static str) {
-        if let Ok((mut stream, _)) = listener.accept().await {
+    /// Answer every connection with `body`. Every one, not the first: a connection from another
+    /// test must not use up the answer this test's scrape is waiting for.
+    async fn serve(listener: TcpListener, body: &'static str) {
+        while let Ok((mut stream, _)) = listener.accept().await {
             let mut buf = [0u8; 1024];
             let _ = stream.read(&mut buf).await;
             let resp = format!(
@@ -236,11 +238,13 @@ mod tests {
         }
     }
 
-    /// Ephemeral port grabbed then released — guaranteed nothing listens
-    /// there (same pattern vxprobe's loopback test uses).
-    async fn dead_addr() -> String {
-        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        l.local_addr().unwrap().to_string()
+    /// An address where nothing listens, held for as long as the socket lives: bound but not
+    /// listening, so a connection is refused and no other test is handed the port meanwhile.
+    async fn dead_addr() -> (tokio::net::TcpSocket, String) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = socket.local_addr().unwrap().to_string();
+        (socket, addr)
     }
 
     async fn tmp_dir(label: &str) -> PathBuf {
@@ -254,15 +258,15 @@ mod tests {
     async fn optional_target_failure_does_not_affect_completeness() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ok_addr = listener.local_addr().unwrap().to_string();
-        tokio::spawn(serve_once(listener, "vxtest_metric 1\n"));
-
+        tokio::spawn(serve(listener, "vxtest_metric 1\n"));
+        let (_held, dead) = dead_addr().await;
         let targets = vec![
             ScrapeTarget {
                 address: ok_addr,
                 optional: false,
             },
             ScrapeTarget {
-                address: dead_addr().await,
+                address: dead,
                 optional: true,
             },
         ];
@@ -290,8 +294,9 @@ mod tests {
 
     #[tokio::test]
     async fn required_target_failure_reduces_completeness() {
+        let (_held, dead) = dead_addr().await;
         let targets = vec![ScrapeTarget {
-            address: dead_addr().await,
+            address: dead,
             optional: false,
         }];
         let dir = tmp_dir("required").await;
@@ -310,11 +315,11 @@ mod tests {
     async fn a_round_writes_entity_samples_and_gaps() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ok_addr = listener.local_addr().unwrap().to_string();
-        tokio::spawn(serve_once(
+        tokio::spawn(serve(
             listener,
             "vxtest_rtt_seconds{quantile=\"0.99\"} 0.5\nvxedge_node_cpu_seconds_total{entity=\"car/_/hpc1\"} 3\n",
         ));
-        let dead = dead_addr().await;
+        let (_held, dead) = dead_addr().await;
         let dir = tmp_dir("records").await;
         std::fs::write(
             dir.join("entities.json"),
