@@ -12,6 +12,7 @@ pub mod archive;
 pub mod archive_v2;
 pub mod identity;
 pub mod ingest;
+pub mod logs;
 pub mod package;
 pub mod promtext;
 pub mod records;

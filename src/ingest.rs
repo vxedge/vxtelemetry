@@ -24,6 +24,9 @@ pub struct IngestStats {
     pub optional_scrapes_ok: u64,
     #[serde(default)]
     pub optional_scrapes_failed: u64,
+    /// Lines read from the log files `entities.json` names (`crate::logs`).
+    #[serde(default)]
+    pub log_lines_total: u64,
 }
 
 impl IngestStats {
@@ -65,17 +68,21 @@ fn now_ms() -> i64 {
 ///
 /// Besides `samples.jsonl` (the v1 shape), each round appends v2 records to `records.jsonl`
 /// (`ARCHITECTURE.md` §12): a `sample` per value, named by the entity `entities.json` binds the
-/// target to, and a `gap` for a required target that did not answer, spanning the round.
+/// target to, and a `gap` for a required target that did not answer, spanning the round. The
+/// round also reads what the entities' log files gained into `logs.jsonl`.
 pub async fn scrape_round(
     targets: &[ScrapeTarget],
     ingest_dir: &Path,
     stats: &mut IngestStats,
 ) -> Result<(), TelemetryError> {
+    let entities = crate::records::Entities::load(ingest_dir);
+    let mut logs = crate::logs::Tailer::load(ingest_dir, entities.logs().to_vec());
     scrape_round_into(
         targets,
         ingest_dir,
         stats,
-        &crate::records::Entities::load(ingest_dir),
+        &entities,
+        &mut logs,
         Duration::from_secs(1),
     )
     .await
@@ -86,6 +93,7 @@ async fn scrape_round_into(
     ingest_dir: &Path,
     stats: &mut IngestStats,
     entities: &crate::records::Entities,
+    logs: &mut crate::logs::Tailer,
     interval: Duration,
 ) -> Result<(), TelemetryError> {
     let ts = now_ms();
@@ -165,6 +173,8 @@ async fn scrape_round_into(
         }
     }
     records.write_all(v2.as_bytes()).await?;
+    // Bounded by `logs::ROUND_CAP` per file, so a plain read does not hold the round up.
+    stats.log_lines_total += logs.round(ts_ns)?;
     stats.rounds += 1;
     Ok(())
 }
@@ -185,10 +195,19 @@ pub async fn run_ingest(
     // ingest finishing early and silently missing scrapes near the end.
     let rounds = (duration.as_secs() / interval.as_secs().max(1)).max(1);
     let entities = crate::records::Entities::load(&ingest_dir);
+    let mut logs = crate::logs::Tailer::load(&ingest_dir, entities.logs().to_vec());
     let mut ticker = tokio::time::interval(interval);
     for _ in 0..=rounds {
         ticker.tick().await;
-        scrape_round_into(targets, &ingest_dir, &mut stats, &entities, interval).await?;
+        scrape_round_into(
+            targets,
+            &ingest_dir,
+            &mut stats,
+            &entities,
+            &mut logs,
+            interval,
+        )
+        .await?;
     }
     tokio::fs::write(
         ingest_dir.join("ingest-stats.json"),
@@ -260,6 +279,11 @@ mod tests {
             100.0,
             "optional failure must not count"
         );
+        // Nothing names a log file, yet a reader following logs sees an open, empty file.
+        assert_eq!(
+            std::fs::read_to_string(dir.join(crate::logs::FILE)).unwrap(),
+            ""
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -295,10 +319,12 @@ mod tests {
         std::fs::write(
             dir.join("entities.json"),
             format!(
-                r#"[{{"path":"car/front/ecu1","kind":"node","scrape_targets":["{ok_addr}"]}}]"#
+                r#"[{{"path":"car/front/ecu1","kind":"node","scrape_targets":["{ok_addr}"],
+                     "logs":[{{"stream":"serial","path":"ecu1.serial.log"}}]}}]"#
             ),
         )
         .unwrap();
+        std::fs::write(dir.join("ecu1.serial.log"), "login: \nbooting\n").unwrap();
         let targets = vec![
             ScrapeTarget {
                 address: ok_addr,
@@ -311,6 +337,14 @@ mod tests {
         ];
         let mut stats = IngestStats::default();
         scrape_round(&targets, &dir, &mut stats).await.unwrap();
+        assert_eq!(stats.log_lines_total, 2);
+        let log = std::fs::read_to_string(dir.join(crate::logs::FILE)).unwrap();
+        assert!(
+            matches!(serde_json::from_str(log.lines().nth(1).unwrap()).unwrap(),
+            crate::records::Record::Log { entity, stream, line, .. }
+            if entity == "car/front/ecu1" && stream == "serial" && line == "booting"),
+            "{log}"
+        );
         let text = std::fs::read_to_string(dir.join("records.jsonl")).unwrap();
         let recs: Vec<crate::records::Record> = text
             .lines()

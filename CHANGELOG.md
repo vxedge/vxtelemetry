@@ -23,6 +23,15 @@ All notable changes to this repo are documented here. Format follows
 - `vxtelemetry verify` checks a v2 archive's index too: a changed, added or missing member fails
   it. `vxtelemetry records <archive>` prints the records of a v1 or v2 archive as JSON Lines; a v1
   archive's samples read as `sample` records.
+- Log records (decision X-18): ingest reads the log files `entities.json` names for each entity
+  (`logs: [{stream, path}]`) and appends one `log` record per complete line (`ts_ns` of the round
+  that read it, `entity`, `stream`, `line`) to `logs.jsonl`. A line still being written waits for
+  the next round; a round reads at most 1 MiB per file; where each file was read up to is kept in
+  `logs.offsets.json`, so a restarted ingest resumes; a file that shrinks is read again from its
+  start. `logs.jsonl` exists from the first round, empty when nothing logged; a file that cannot be
+  read for a reason other than not existing yet is reported once and skipped.
+  `ingest-stats.json` counts `log_lines_total`. Archive v2 packs them as
+  `logs/<entity>.jsonl.zst`, one member per entity, and `vxtelemetry records --logs` prints them.
 
 ## [0.4.0] - 2026-11-06
 
