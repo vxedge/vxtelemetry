@@ -9,10 +9,12 @@
 //! rather than depending on `vxedge-core`.
 
 pub mod archive;
+pub mod archive_v2;
 pub mod identity;
 pub mod ingest;
 pub mod package;
 pub mod promtext;
+pub mod records;
 pub mod sample;
 pub mod scrape;
 pub mod workspace_view;

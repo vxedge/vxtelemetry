@@ -19,6 +19,9 @@ sha2 = "0.11"
 # its directory walker, which reads global and environment ignore rules.
 ignore = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
+# Archive v2 compresses its record files with zstd (decision X-7); Python reads them with
+# `compression.zstd` from 3.14.
+zstd = { version = "0.13", default-features = false }
 regex-lite = "0.1"
 thiserror = "2"
 tracing = "0.1"
