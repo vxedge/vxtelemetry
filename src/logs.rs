@@ -43,6 +43,8 @@ pub struct Tailer {
     sources: Vec<Source>,
     offsets: BTreeMap<String, u64>,
     dir: PathBuf,
+    /// Sources already reported unreadable, so each is reported once.
+    warned: std::collections::BTreeSet<String>,
 }
 
 impl Tailer {
@@ -56,24 +58,38 @@ impl Tailer {
             sources,
             offsets,
             dir: dir.to_path_buf(),
+            warned: Default::default(),
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.sources.is_empty()
-    }
-
     /// Read what every source gained, append it to `logs.jsonl` as records stamped `ts_ns`, and
-    /// return how many lines were read. A source that cannot be read yet (not created, removed)
-    /// is skipped this round.
+    /// return how many lines were read. `logs.jsonl` exists after the first round even when
+    /// nothing logged, so a reader following it sees an open, empty stream rather than nothing
+    /// ingested. A source not created yet, or removed, is skipped this round; one that cannot be
+    /// read for another reason (permissions) is skipped and reported once.
     pub fn round(&mut self, ts_ns: i64) -> std::io::Result<u64> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join(FILE))?;
+        if self.sources.is_empty() {
+            return Ok(0);
+        }
         let mut out = Vec::new();
         let mut lines = 0;
         for s in &self.sources {
             let key = s.path.to_string_lossy().into_owned();
             let from = self.offsets.get(&key).copied().unwrap_or(0);
-            let Ok((read, next)) = read_lines(&s.path, from) else {
-                continue;
+            let (read, next) = match read_lines(&s.path, from) {
+                Ok(r) => r,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    if self.warned.insert(key) {
+                        tracing::warn!(entity = %s.entity, stream = %s.stream,
+                            path = %s.path.display(), error = %e, "log file not readable");
+                    }
+                    continue;
+                }
             };
             for line in read {
                 let rec = Record::Log {
@@ -88,13 +104,7 @@ impl Tailer {
             }
             self.offsets.insert(key, next);
         }
-        if !out.is_empty() {
-            std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(self.dir.join(FILE))?
-                .write_all(&out)?;
-        }
+        file.write_all(&out)?;
         // Written after the records: a crash between the two repeats lines, never loses them.
         let tmp = self.dir.join(format!("{OFFSETS}.tmp"));
         std::fs::write(
@@ -217,6 +227,15 @@ mod tests {
         std::fs::write(&log, "new\n").unwrap();
         assert_eq!(t.round(3).unwrap(), 1);
         assert_eq!(logged(&dir).last().unwrap().1, "new");
+        // A file that cannot be read for another reason is skipped, not fatal.
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // (Root reads it anyway; the check only means something unprivileged.)
+        if std::fs::File::open(&log).is_err() {
+            assert_eq!(t.round(4).unwrap(), 0);
+            assert_eq!(t.round(5).unwrap(), 0, "and reported once");
+        }
+        std::fs::set_permissions(&log, std::fs::Permissions::from_mode(0o644)).unwrap();
         std::fs::remove_dir_all(&dir).ok();
     }
 

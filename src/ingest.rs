@@ -173,10 +173,8 @@ async fn scrape_round_into(
         }
     }
     records.write_all(v2.as_bytes()).await?;
-    if !logs.is_empty() {
-        // Bounded by `logs::ROUND_CAP` per file, so a plain read does not hold the round up.
-        stats.log_lines_total += logs.round(ts_ns)?;
-    }
+    // Bounded by `logs::ROUND_CAP` per file, so a plain read does not hold the round up.
+    stats.log_lines_total += logs.round(ts_ns)?;
     stats.rounds += 1;
     Ok(())
 }
@@ -280,6 +278,11 @@ mod tests {
             stats.completeness_pct(),
             100.0,
             "optional failure must not count"
+        );
+        // Nothing names a log file, yet a reader following logs sees an open, empty file.
+        assert_eq!(
+            std::fs::read_to_string(dir.join(crate::logs::FILE)).unwrap(),
+            ""
         );
 
         let _ = std::fs::remove_dir_all(&dir);

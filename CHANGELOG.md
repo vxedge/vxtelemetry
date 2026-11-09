@@ -28,7 +28,9 @@ All notable changes to this repo are documented here. Format follows
   that read it, `entity`, `stream`, `line`) to `logs.jsonl`. A line still being written waits for
   the next round; a round reads at most 1 MiB per file; where each file was read up to is kept in
   `logs.offsets.json`, so a restarted ingest resumes; a file that shrinks is read again from its
-  start. `ingest-stats.json` counts `log_lines_total`. Archive v2 packs them as
+  start. `logs.jsonl` exists from the first round, empty when nothing logged; a file that cannot be
+  read for a reason other than not existing yet is reported once and skipped.
+  `ingest-stats.json` counts `log_lines_total`. Archive v2 packs them as
   `logs/<entity>.jsonl.zst`, one member per entity, and `vxtelemetry records --logs` prints them.
 
 ## [0.4.0] - 2026-11-06
