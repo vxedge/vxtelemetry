@@ -9,6 +9,7 @@
 //! entities.json               the entity paths records name, as vxedged mapped them
 //! metrics/samples.jsonl.zst   `sample` and `gap` records
 //! phases.jsonl                `phase` records, when there are any
+//! logs/<entity>.jsonl.zst     `log` records, one member per entity that logged (decision X-18)
 //! events.jsonl                vxAPI events, when the ingest folder holds them
 //! ```
 //!
@@ -97,6 +98,22 @@ pub fn collect(
     ));
     if !phases.is_empty() {
         members.push((PHASES.into(), phases));
+    }
+    // Logs: one compressed member per entity, each in the order the ingest read its lines.
+    let mut logs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    if let Ok(text) = std::fs::read_to_string(ingest_dir.join(crate::logs::FILE)) {
+        for line in text.lines().filter(|l| !l.trim().is_empty()) {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            let member = crate::logs::member(v["entity"].as_str().unwrap_or(crate::records::HOST));
+            let body = logs.entry(member).or_default();
+            body.extend_from_slice(line.as_bytes());
+            body.push(b'\n');
+        }
+    }
+    for (member, body) in logs {
+        members.push((member, zstd::encode_all(body.as_slice(), 9).map_err(arch)?));
     }
     if let Ok(bytes) = std::fs::read(ingest_dir.join(EVENTS)) {
         members.push((EVENTS.into(), bytes));
@@ -278,6 +295,25 @@ pub fn records(archive: &Path) -> Result<Vec<Record>, TelemetryError> {
     Ok(out)
 }
 
+/// Every `log` record a v2 archive holds, entity by entity in member order, each entity's lines
+/// in the order they were read. A v1 archive, or a run that logged nothing, has none.
+pub fn logs(archive: &Path) -> Result<Vec<Record>, TelemetryError> {
+    let mut out = Vec::new();
+    for (name, compressed) in members_of(archive)? {
+        if !(name.starts_with("logs/") && name.ends_with(".jsonl.zst")) {
+            continue;
+        }
+        let bytes = zstd::decode_all(compressed.as_slice()).map_err(arch)?;
+        for line in String::from_utf8_lossy(&bytes)
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+        {
+            out.push(serde_json::from_str(line).map_err(arch)?);
+        }
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -308,6 +344,18 @@ mod tests {
                 r#"{"record":"gap","entity":"host","from_ns":11,"to_ns":12,"reason":"scrape failed"}"#,
                 "\n",
                 r#"{"record":"phase","ts_ns":9,"phase":"measure"}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            ingest.join(crate::logs::FILE),
+            concat!(
+                r#"{"record":"log","ts_ns":10,"entity":"car/front/ecu1","stream":"serial","line":"boot"}"#,
+                "\n",
+                r#"{"record":"log","ts_ns":10,"entity":"host/services/traffic","stream":"stdout","line":"go"}"#,
+                "\n",
+                r#"{"record":"log","ts_ns":20,"entity":"car/front/ecu1","stream":"serial","line":"ready"}"#,
                 "\n"
             ),
         )
@@ -353,6 +401,26 @@ mod tests {
         assert!(matches!(&recs[0], Record::Sample { entity, .. } if entity == "car/front/ecu1"));
         assert!(matches!(&recs[1], Record::Gap { .. }));
         assert!(matches!(&recs[2], Record::Phase { phase, .. } if phase == "measure"));
+
+        assert!(members.contains_key("logs/car/front/ecu1.jsonl.zst"));
+        assert!(members.contains_key("logs/host/services/traffic.jsonl.zst"));
+        let lines: Vec<(String, String)> = logs(&out)
+            .unwrap()
+            .into_iter()
+            .map(|r| match r {
+                Record::Log { entity, line, .. } => (entity, line),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("car/front/ecu1".into(), "boot".into()),
+                ("car/front/ecu1".into(), "ready".into()),
+                ("host/services/traffic".into(), "go".into()),
+            ],
+            "per entity, in the order read"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 

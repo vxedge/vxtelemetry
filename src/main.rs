@@ -88,6 +88,9 @@ enum Cmd {
     Records {
         /// The results archive (`.zip`).
         archive: PathBuf,
+        /// Print its `log` records instead, entity by entity (v2 only).
+        #[arg(long)]
+        logs: bool,
     },
 }
 
@@ -183,10 +186,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .await??;
             println!("{}", serde_json::to_string_pretty(&metadata)?);
         }
-        Cmd::Records { archive } => {
-            let recs =
-                tokio::task::spawn_blocking(move || vxtelemetry::archive_v2::records(&archive))
-                    .await??;
+        Cmd::Records { archive, logs } => {
+            let recs = tokio::task::spawn_blocking(move || {
+                if logs {
+                    vxtelemetry::archive_v2::logs(&archive)
+                } else {
+                    vxtelemetry::archive_v2::records(&archive)
+                }
+            })
+            .await??;
             let mut out = std::io::stdout().lock();
             for r in &recs {
                 use std::io::Write;

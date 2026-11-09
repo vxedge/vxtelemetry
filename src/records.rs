@@ -37,6 +37,15 @@ pub enum Record {
         trial: Option<String>,
         phase: String,
     },
+    /// One line of one of an entity's log files (`crate::logs`), stamped with the round that
+    /// read it. Kept in `logs.jsonl`, apart from the metrics.
+    Log {
+        ts_ns: i64,
+        entity: String,
+        /// What the file is to its entity: `serial`, `console`, `stdout`, `traffic`, …
+        stream: String,
+        line: String,
+    },
 }
 
 /// The entity path of the host, and of any target no entity claims.
@@ -46,10 +55,12 @@ pub const HOST: &str = "host";
 #[derive(Debug, Clone, Default)]
 pub struct Entities {
     by_target: BTreeMap<String, String>,
+    logs: Vec<crate::logs::Source>,
 }
 
 impl Entities {
-    /// Read `entities.json` from `dir`. A folder without one binds every target to `host`.
+    /// Read `entities.json` from `dir`. A folder without one binds every target to `host` and
+    /// names no logs. A log path that is relative is taken from `dir`.
     pub fn load(dir: &Path) -> Self {
         let Ok(text) = std::fs::read_to_string(dir.join("entities.json")) else {
             return Self::default();
@@ -57,7 +68,7 @@ impl Entities {
         let Ok(list) = serde_json::from_str::<Vec<serde_json::Value>>(&text) else {
             return Self::default();
         };
-        let mut by_target = BTreeMap::new();
+        let (mut by_target, mut logs) = (BTreeMap::new(), Vec::new());
         for e in &list {
             let Some(path) = e["path"].as_str() else {
                 continue;
@@ -67,8 +78,23 @@ impl Entities {
                     by_target.insert(t.to_string(), path.to_string());
                 }
             }
+            for l in e["logs"].as_array().into_iter().flatten() {
+                let (Some(stream), Some(file)) = (l["stream"].as_str(), l["path"].as_str()) else {
+                    continue;
+                };
+                logs.push(crate::logs::Source {
+                    entity: path.to_string(),
+                    stream: stream.to_string(),
+                    path: dir.join(file),
+                });
+            }
         }
-        Self { by_target }
+        Self { by_target, logs }
+    }
+
+    /// Every log file the list names, with its entity.
+    pub fn logs(&self) -> &[crate::logs::Source] {
+        &self.logs
     }
 
     /// Every target the list binds.
@@ -147,6 +173,31 @@ mod tests {
                 .unwrap()
                 .starts_with(r#"{"record":"gap""#)
         );
+    }
+
+    #[test]
+    fn entities_name_their_log_files() {
+        let dir = std::env::temp_dir().join(format!("vxtel-entlogs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("entities.json"),
+            r#"[{"path":"car/front/ecu1","kind":"node","logs":[
+                {"stream":"serial","path":"/run/vx/vx-ecu1.serial.log"},
+                {"stream":"console","path":"rel.log"},{"path":"no-stream.log"}]}]"#,
+        )
+        .unwrap();
+        let logs = Entities::load(&dir).logs().to_vec();
+        assert_eq!(logs.len(), 2, "{logs:?}");
+        assert_eq!(
+            logs[0].path,
+            std::path::Path::new("/run/vx/vx-ecu1.serial.log")
+        );
+        assert_eq!(
+            (logs[1].stream.as_str(), logs[1].path.clone()),
+            ("console", dir.join("rel.log"))
+        );
+        assert!(logs.iter().all(|l| l.entity == "car/front/ecu1"));
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
