@@ -14,6 +14,7 @@ pub mod identity;
 pub mod ingest;
 pub mod logs;
 pub mod package;
+pub mod phases;
 pub mod promtext;
 pub mod records;
 pub mod sample;

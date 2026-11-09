@@ -60,6 +60,11 @@ pub struct ArchiveMetadata {
     /// archives from before it was recorded, and where the kernel cannot be read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel: Option<Kernel>,
+    /// The trial this archive is, as the campaign runner wrote it to the ingest folder's
+    /// `trial.json`: campaign id, trial id, arm, repetition, parameter values. Absent outside a
+    /// campaign. Recorded as given, so the runner owns its shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trial: Option<serde_json::Value>,
 }
 
 /// The running kernel, read the way `vxedge-core` reads it and independently of it.
@@ -176,6 +181,12 @@ pub(crate) fn metadata_for(
     ingest_dir: &Path,
     image_digests: Option<BTreeMap<String, String>>,
 ) -> ArchiveMetadata {
+    // Phase markers that came after the ingest's last round (teardown) belong in this archive.
+    let _ = crate::phases::drain(ingest_dir);
+    let trial = std::fs::read(ingest_dir.join(TRIAL_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(serde_json::Value::is_object);
     let ingest_stats: Option<IngestStats> = std::fs::read(ingest_dir.join("ingest-stats.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok());
@@ -193,8 +204,12 @@ pub(crate) fn metadata_for(
         ingest: ingest_stats,
         image_digests,
         kernel: Kernel::probe(),
+        trial,
     }
 }
+
+/// The file in the ingest folder a campaign runner writes the trial's identity to.
+pub const TRIAL_FILE: &str = "trial.json";
 
 /// Create `out` (zip) from the ingest dir + the source workspace + metadata.
 pub fn collect(
@@ -384,6 +399,7 @@ mod tests {
             ingest: None,
             image_digests: None,
             kernel: None,
+            trial: None,
         };
         let json = serde_json::to_value(&meta).unwrap();
         assert!(json.get("image_digests").is_none());
