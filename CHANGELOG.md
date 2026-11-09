@@ -6,6 +6,21 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-09
+
+Records are named by entity, a run's logs are archived, and archive v2 packs both.
+- **Records by entity.** Ingest writes `records.jsonl`: `sample`, `gap` and `phase` records, each
+  naming the vehicle, zone, node, slice or service it is about, as vxedged's `entities.json` maps
+  them.
+- **Logs.** Ingest reads each entity's log files into `logs.jsonl`.
+- **Archive v2.** `collect --archive-version 2` packs both, zstd-compressed and per entity, with
+  an index that `verify` checks. `records` prints any archive's records, v1 or v2.
+
+**Upgrading from 0.4.x.** Archive v1 stays the default, so existing notebooks read new archives
+unchanged. Set `--archive-version 2` (or `VXTELEMETRY_ARCHIVE_VERSION=2`) for the new shape. Logs
+and entity names need vxedge 0.12.0's `entities.json`; without it, every target binds to `host` and
+no logs are read.
+
 ### Added
 
 - Telemetry records (`ARCHITECTURE.md` §12): each ingest round also appends to `records.jsonl` a
