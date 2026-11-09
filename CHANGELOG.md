@@ -6,6 +6,14 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- An ingest round could return before its `records.jsonl` and `samples.jsonl` lines were
+  written: tokio file writes finish on a background thread, and the round never flushed. A reader
+  could find an empty file, and the last round of a run could be lost on exit. Each round now
+  flushes both files. Found as an intermittent CI failure of
+  `a_round_writes_entity_samples_and_gaps`.
+
 ### Added
 
 - Telemetry records (`ARCHITECTURE.md` §12): each ingest round also appends to `records.jsonl` a
