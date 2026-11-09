@@ -371,6 +371,35 @@ mod tests {
     }
 
     #[test]
+    fn a_campaign_trial_records_its_identity_and_late_phases() {
+        let (tmp, view, ingest) = fixture("trial");
+        std::fs::write(
+            ingest.join(crate::archive::TRIAL_FILE),
+            r#"{"campaign_id":"c1","trial_id":"r1-idle","arm":"idle","repetition":1,"parameters":{"load_mbps":0}}"#,
+        )
+        .unwrap();
+        // Teardown came after the ingest's last round: collect still moves it into the records.
+        std::fs::write(
+            ingest.join(crate::phases::FILE),
+            "{\"record\":\"phase\",\"ts_ns\":99,\"trial\":\"r1-idle\",\"phase\":\"teardown\"}\n",
+        )
+        .unwrap();
+        let out = tmp.join("trial.zip");
+        let meta = collect(&view, &ingest, &out, None).unwrap();
+        let trial = meta.trial.unwrap();
+        assert_eq!(
+            (trial["trial_id"].as_str(), trial["repetition"].as_u64()),
+            (Some("r1-idle"), Some(1))
+        );
+        let recs = records(&out).unwrap();
+        assert!(
+            recs.iter().any(|r| matches!(r, Record::Phase { ts_ns: 99, phase, trial: Some(t) } if phase == "teardown" && t == "r1-idle")),
+            "{recs:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn a_v2_archive_lists_checks_and_reads_back_its_records() {
         let (tmp, view, ingest) = fixture("roundtrip");
         let out = tmp.join("run.zip");

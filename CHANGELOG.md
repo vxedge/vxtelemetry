@@ -6,6 +6,17 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- Campaign trials (vxedge's `CampaignService`):
+  - `collect` records the ingest folder's `trial.json`, the trial's campaign id, trial id, arm,
+    repetition and parameter values, as `trial` in `metadata.json`, in archive v1 and v2 alike.
+  - Phase markers the runner appends to `phases.jsonl` (`phase` records: `ts_ns`, `trial`,
+    `phase`) move into `records.jsonl` with the time the runner gave them. Ingest moves them
+    every round, and `collect` once more before it archives, for the markers that came after the
+    last round, such as teardown. This tool stays the one writer of `records.jsonl`.
+  - Both are absent outside a campaign, and nothing changes for an archive without them.
+
 ## [0.5.0] - 2026-11-09
 
 Records are named by entity, a run's logs are archived, and archive v2 packs both.

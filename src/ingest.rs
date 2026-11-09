@@ -177,6 +177,9 @@ async fn scrape_round_into(
     // and a reader see the file, before its records are written.
     records.flush().await?;
     samples_file.flush().await?;
+    // After this round's own records: the campaign runner's phase markers, in the order it wrote
+    // them (`crate::phases`).
+    crate::phases::drain(ingest_dir)?;
     // Bounded by `logs::ROUND_CAP` per file, so a plain read does not hold the round up.
     stats.log_lines_total += logs.round(ts_ns)?;
     stats.rounds += 1;
