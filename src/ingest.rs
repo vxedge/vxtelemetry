@@ -173,6 +173,10 @@ async fn scrape_round_into(
         }
     }
     records.write_all(v2.as_bytes()).await?;
+    // A tokio file finishes writes on a background thread: without a flush the round can return,
+    // and a reader see the file, before its records are written.
+    records.flush().await?;
+    samples_file.flush().await?;
     // Bounded by `logs::ROUND_CAP` per file, so a plain read does not hold the round up.
     stats.log_lines_total += logs.round(ts_ns)?;
     stats.rounds += 1;
