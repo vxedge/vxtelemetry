@@ -6,6 +6,13 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-10
+
+Archives know which campaign trial they are. `collect` records the trial's identity from the
+ingest folder's `trial.json`, and the phase markers a campaign runner writes reach the records,
+with the late ones included. This is for vxedge 0.13.0's `CampaignService`. Nothing changes for
+an archive outside a campaign.
+
 ### Added
 
 - Campaign trials (vxedge's `CampaignService`):
