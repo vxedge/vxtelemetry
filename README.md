@@ -15,6 +15,23 @@ vxedge is an open, all-software testbed for mapping 5G network slices onto zonal
 | `vxtelemetry ingest` | Scrape the workspace's targets on an interval; persist raw and structured samples |
 | `vxtelemetry sample` | Sample CPU% and RSS of processes matched by a cmdline regex |
 | `vxtelemetry collect` | Bundle the ingest directory, the source workspace and reproducibility metadata (including image digests) into one zip archive |
+| `vxtelemetry verify` | Check an archive: every member against its index (v2), the recorded workspace identity and the package digest. Exits 0 when all pass, 1 when one fails, 3 when nothing failed but the identity is not checkable (see below) |
+| `vxtelemetry records` | Print an archive's records, v1 or v2, as JSON Lines |
+
+### Verify outcomes
+
+`verify` prints its result as JSON on stdout and one summary line on stderr. For a v2 archive, the
+index check is the integrity result. The identity is then one of three outcomes:
+
+- **checked:** `package/`, re-hashed under the recorded `workspace_identity_algorithm`, gives the
+  recorded `workspace_sha256`;
+- **mismatch:** it gives a different value (exit 1);
+- **not checkable**, with the reason (exit 3 when nothing else failed). An archive that records no
+  algorithm was written before identity algorithms were recorded, and its `package/` holds only
+  the documents. One that records only `manifest_sha256` was written before workspace
+  identities. `verify` never assumes an algorithm.
+
+Exit code 2 is a usage error.
 
 ## Quickstart
 

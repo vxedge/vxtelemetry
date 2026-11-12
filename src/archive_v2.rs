@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::TelemetryError;
-use crate::archive::{ArchiveMetadata, DigestCheck, Verification};
+use crate::archive::{ArchiveMetadata, DigestCheck, IdentityCheck, IdentityOutcome, Verification};
 use crate::records::{Entities, Record};
 use crate::workspace_view::WorkspaceView;
 
@@ -181,9 +181,21 @@ pub fn is_v2(archive: &Path) -> bool {
         .is_some_and(|i| i.schema == SCHEMA)
 }
 
-/// Verify an archive v2: every member matches `index.json` and nothing is added or missing; the
-/// `package/` members re-hash to the recorded identity; and they pack to the recorded package
-/// digest, when there is one.
+/// Why an archive's identity is not checkable: it records an identity but no algorithm. Archives
+/// were written this way when they carried only the workspace documents, so `package/` cannot
+/// reproduce the identity, and the algorithm is never assumed.
+pub const NO_ALGORITHM: &str =
+    "written before identity algorithms were recorded; package/ holds only the documents";
+/// Why an archive's identity is not checkable: it records `manifest_sha256` and no
+/// `workspace_sha256`, from before workspace identities existed.
+pub const MANIFEST_ONLY: &str = "written before workspace identities; records a manifest digest";
+/// Why an archive's identity is not checkable: `metadata.json` records no identity at all.
+pub const NO_IDENTITY: &str = "metadata.json records no workspace identity";
+
+/// Verify an archive v2. The index check is the integrity result: every member matches
+/// `index.json`, and nothing is added or missing. The identity is then checked, mismatched, or
+/// not checkable with the reason: `package/` is re-hashed only under the algorithm the archive
+/// records, never an assumed one. The package digest is checked when the archive records one.
 pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
     let members = members_of(archive)?;
     let bad = |m: String| TelemetryError::Archive(format!("`{}`: {m}", archive.display()));
@@ -211,19 +223,36 @@ pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
             .ok_or_else(|| bad("no metadata.json".into()))?,
     )
     .map_err(|e| bad(format!("metadata.json: {e}")))?;
-    let recorded = metadata["workspace_sha256"]
-        .as_str()
-        .ok_or_else(|| bad("metadata.json has no workspace_sha256".into()))?
-        .to_string();
+    let recorded = metadata["workspace_sha256"].as_str().map(str::to_string);
     let algorithm = metadata["workspace_identity_algorithm"]
         .as_str()
-        .unwrap_or(crate::identity::CURRENT)
-        .to_string();
+        .map(str::to_string);
     let inputs: Vec<(String, Vec<u8>)> = members
         .iter()
         .filter_map(|(p, b)| p.strip_prefix(PACKAGE).map(|r| (r.to_string(), b.clone())))
         .collect();
-    let computed = crate::identity::digest(&algorithm, &inputs)?;
+    let (identity, computed) = match (&recorded, &algorithm) {
+        (Some(recorded), Some(algorithm)) => {
+            let computed = crate::identity::digest(algorithm, &inputs)?;
+            let outcome = if &computed == recorded {
+                IdentityOutcome::Checked
+            } else {
+                IdentityOutcome::Mismatch
+            };
+            (
+                IdentityCheck {
+                    outcome,
+                    reason: None,
+                },
+                Some(computed),
+            )
+        }
+        (Some(_), None) => (not_checkable(NO_ALGORITHM), None),
+        (None, _) if metadata["manifest_sha256"].is_string() => {
+            (not_checkable(MANIFEST_ONLY), None)
+        }
+        (None, _) => (not_checkable(NO_IDENTITY), None),
+    };
     let package_digest = match metadata["package"]["digest"].as_str() {
         Some(recorded) => Some(DigestCheck {
             recorded: recorded.to_string(),
@@ -231,18 +260,26 @@ pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
         }),
         None => None,
     };
+    let package_ok = package_digest
+        .as_ref()
+        .is_none_or(|d| d.recorded == d.computed);
     Ok(Verification {
-        ok: index_ok
-            && computed == recorded
-            && package_digest
-                .as_ref()
-                .is_none_or(|d| d.recorded == d.computed),
+        ok: index_ok && identity.outcome == IdentityOutcome::Checked && package_ok,
+        index: Some(index_ok),
+        identity,
         algorithm,
         recorded,
         computed,
         files: inputs.len(),
         package_digest,
     })
+}
+
+fn not_checkable(reason: &str) -> IdentityCheck {
+    IdentityCheck {
+        outcome: IdentityOutcome::NotCheckable,
+        reason: Some(reason.to_string()),
+    }
 }
 
 /// Every record an archive holds, v1 or v2, in file order: samples and gaps, then phases.
@@ -500,7 +537,164 @@ mod tests {
         zip.finish().unwrap();
         let v = verify(&forged).unwrap();
         assert!(!v.ok, "{v:?}");
+        assert_eq!(v.index, Some(false));
+        assert_eq!(v.identity.outcome, IdentityOutcome::Checked);
         assert_eq!(v.recorded, v.computed, "the identity alone still matches");
+        assert_eq!(v.exit_code(), 1);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// `members` as an archive with a fresh `index.json`, so the index check passes.
+    fn reindexed(members: &BTreeMap<String, Vec<u8>>, out: &Path) {
+        let files = members
+            .iter()
+            .filter(|(p, _)| p.as_str() != "index.json")
+            .map(|(p, b)| IndexEntry {
+                path: p.clone(),
+                size: b.len() as u64,
+                sha256: format!("sha256:{}", hex(b)),
+            })
+            .collect();
+        let index = Index {
+            schema: SCHEMA.into(),
+            files,
+        };
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(out).unwrap());
+        zip.start_file("index.json", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&serde_json::to_vec(&index).unwrap()).unwrap();
+        for (p, b) in members.iter().filter(|(p, _)| p.as_str() != "index.json") {
+            zip.start_file(p.as_str(), zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    /// A collected archive's members, with `metadata.json` changed by `edit`.
+    fn with_metadata(
+        out: &Path,
+        edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+    ) -> BTreeMap<String, Vec<u8>> {
+        let mut members = members_of(out).unwrap();
+        let mut meta: serde_json::Value =
+            serde_json::from_slice(&members["metadata.json"]).unwrap();
+        edit(meta.as_object_mut().unwrap());
+        members.insert(
+            "metadata.json".into(),
+            serde_json::to_vec_pretty(&meta).unwrap(),
+        );
+        members
+    }
+
+    #[test]
+    fn a_checked_identity_verifies() {
+        let (tmp, view, ingest) = fixture("checked");
+        let out = tmp.join("run.zip");
+        collect(&view, &ingest, &out, None).unwrap();
+        let v = verify(&out).unwrap();
+        assert!(v.ok, "{v:?}");
+        assert_eq!(v.index, Some(true));
+        assert_eq!(v.identity.outcome, IdentityOutcome::Checked);
+        assert_eq!(v.identity.reason, None);
+        assert_eq!(v.algorithm.as_deref(), Some(crate::identity::CURRENT));
+        assert!(v.computed.is_some() && v.recorded == v.computed);
+        assert_eq!(v.exit_code(), 0);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn a_changed_package_member_is_an_identity_mismatch() {
+        let (tmp, view, ingest) = fixture("mismatch");
+        let out = tmp.join("run.zip");
+        collect(&view, &ingest, &out, None).unwrap();
+        let mut members = members_of(&out).unwrap();
+        members.insert(
+            "package/main.yaml".into(),
+            b"kind: experiment
+id: e3
+"
+            .to_vec(),
+        );
+        let forged = tmp.join("forged.zip");
+        reindexed(&members, &forged);
+        let v = verify(&forged).unwrap();
+        assert!(!v.ok, "{v:?}");
+        assert_eq!(v.index, Some(true), "the index was rewritten to match");
+        assert_eq!(v.identity.outcome, IdentityOutcome::Mismatch);
+        assert_ne!(v.recorded, v.computed);
+        assert_eq!(v.exit_code(), 1);
+        assert!(v.summary().contains("identity MISMATCH"), "{}", v.summary());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn no_recorded_algorithm_is_not_checkable_and_none_is_assumed() {
+        let (tmp, view, ingest) = fixture("noalg");
+        let out = tmp.join("run.zip");
+        collect(&view, &ingest, &out, None).unwrap();
+        // The identity package/ would re-hash to under the current algorithm: still not checked.
+        let members = with_metadata(&out, |m| {
+            m.remove("workspace_identity_algorithm");
+            m.remove("package");
+        });
+        let old = tmp.join("old.zip");
+        reindexed(&members, &old);
+        let v = verify(&old).unwrap();
+        assert!(!v.ok, "{v:?}");
+        assert_eq!(v.index, Some(true));
+        assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
+        assert_eq!(v.identity.reason.as_deref(), Some(NO_ALGORITHM));
+        assert_eq!(
+            (v.algorithm.as_deref(), v.computed.as_deref()),
+            (None, None)
+        );
+        assert!(v.recorded.is_some(), "the recorded identity is still shown");
+        assert_eq!(v.exit_code(), crate::archive::EXIT_NOT_CHECKABLE);
+        assert_eq!(
+            v.summary(),
+            format!("index OK; identity not checkable: {NO_ALGORITHM}")
+        );
+        let json = serde_json::to_value(&v).unwrap();
+        assert_eq!(json["identity"]["outcome"], "not_checkable");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn a_manifest_digest_alone_is_not_checkable() {
+        let (tmp, view, ingest) = fixture("manifest");
+        let out = tmp.join("run.zip");
+        collect(&view, &ingest, &out, None).unwrap();
+        let members = with_metadata(&out, |m| {
+            m.remove("workspace_sha256");
+            m.remove("workspace_identity_algorithm");
+            m.remove("package");
+            m.insert("manifest_sha256".into(), "0".repeat(64).into());
+        });
+        let old = tmp.join("old.zip");
+        reindexed(&members, &old);
+        let v = verify(&old).unwrap();
+        assert_eq!(v.index, Some(true));
+        assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
+        assert_eq!(v.identity.reason.as_deref(), Some(MANIFEST_ONLY));
+        assert_eq!(v.recorded, None);
+        assert_eq!(v.exit_code(), crate::archive::EXIT_NOT_CHECKABLE);
+
+        // A failed index is a failure whatever the identity says.
+        let mut tampered = members_of(&old).unwrap();
+        tampered.insert(ENTITIES.into(), b"[]".to_vec());
+        let forged = tmp.join("forged.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&forged).unwrap());
+        for (p, b) in &tampered {
+            zip.start_file(p.as_str(), zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b).unwrap();
+        }
+        zip.finish().unwrap();
+        let v = verify(&forged).unwrap();
+        assert_eq!(v.index, Some(false));
+        assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
+        assert_eq!(v.exit_code(), 1);
         std::fs::remove_dir_all(&tmp).ok();
     }
 
