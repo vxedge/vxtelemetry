@@ -6,6 +6,19 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- `vxtelemetry verify` no longer reports a mismatch for a v2 archive whose identity it cannot
+  check. It used to assume `vxws/2` when an archive recorded no `workspace_identity_algorithm`,
+  and stopped with an error when it recorded only `manifest_sha256`. The index check is now the
+  integrity result, and the identity is `checked`, `mismatch` or `not_checkable` with the reason:
+  "written before identity algorithms were recorded; package/ holds only the documents", or
+  "written before workspace identities; records a manifest digest". No algorithm is assumed.
+  The JSON gains `index` and `identity` (`outcome`, `reason`); `algorithm`, `recorded` and
+  `computed` are left out when the archive gives no value for them.
+- `verify` exits 3 when nothing failed but the identity is not checkable, and prints a summary
+  line on stderr. 0 still means every check passed, 1 that one failed, and 2 is a usage error.
+
 ## [0.7.0] - 2026-11-12
 
 Archives name the tools behind them. `collect` records the tool binaries the run's daemon runs as

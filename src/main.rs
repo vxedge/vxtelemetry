@@ -78,8 +78,19 @@ enum Cmd {
               value_parser = clap::value_parser!(u8).range(1..=2))]
         archive_version: u8,
     },
-    /// Re-hash an archive's `workspace/` under its recorded algorithm and compare with its
-    /// recorded `workspace_sha256`. Prints the result as JSON; exits 1 on a mismatch.
+    /// Check an archive. For v2, every member against `index.json`; then the identity: the
+    /// workspace (`package/` in v2, `workspace/` in v1) re-hashed under the recorded algorithm
+    /// and compared with the recorded `workspace_sha256`; and the package digest, when recorded.
+    ///
+    /// The identity is checked, a mismatch, or not checkable. It is not checkable when the
+    /// archive records no algorithm (written before identity algorithms were recorded, holding
+    /// only the documents) or only a `manifest_sha256` (written before workspace identities); no
+    /// algorithm is ever assumed. A v1 archive that records no algorithm is refused.
+    ///
+    /// Prints the result as JSON on stdout and one summary line on stderr. Exit codes: 0 every
+    /// check passed; 1 the index, the identity or the package digest does not match, or the
+    /// archive is unreadable; 2 a usage error; 3 nothing failed, but the identity is not
+    /// checkable.
     Verify {
         /// The results archive (`.zip`) written by `collect`.
         archive: PathBuf,
@@ -211,8 +222,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })
             .await??;
             println!("{}", serde_json::to_string_pretty(&v)?);
-            if !v.ok {
-                std::process::exit(1);
+            eprintln!("vxtelemetry verify: {}", v.summary());
+            let code = v.exit_code();
+            if code != 0 {
+                std::process::exit(code);
             }
         }
     }

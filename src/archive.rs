@@ -264,20 +264,102 @@ pub fn collect(
     Ok(metadata)
 }
 
-/// What [`verify`] found: the identity the archive records and the one its `workspace/`
-/// re-hashes to, and the same for the package digest when the archive records one.
+/// What [`verify`] found: whether the members match the index (v2), what could be said about the
+/// recorded workspace identity, and the package digest check when the archive records one.
 #[derive(Debug, Serialize)]
 pub struct Verification {
-    /// Both the identity and, when recorded, the package digest match.
+    /// Every check passed, the identity check among them. False when the identity is not
+    /// checkable, even if nothing failed: see [`Verification::exit_code`].
     pub ok: bool,
-    pub algorithm: String,
-    pub recorded: String,
-    pub computed: String,
-    /// Files under `workspace/`.
+    /// v2: every member matches `index.json`, and nothing is added or missing. Absent for v1,
+    /// which has no index.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub index: Option<bool>,
+    pub identity: IdentityCheck,
+    /// The identity algorithm the archive records; absent when it records none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
+    /// The recorded `workspace_sha256`; absent when the archive records none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<String>,
+    /// The identity the archived workspace re-hashes to; absent when it is not checkable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computed: Option<String>,
+    /// Files under `workspace/` (v1) or `package/` (v2).
     pub files: usize,
     /// Present when `metadata.json` records `package.digest` (a `vxp/1` package).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub package_digest: Option<DigestCheck>,
+}
+
+/// The identity outcome: re-hashed and equal, re-hashed and different, or not checkable, with the
+/// reason. `verify` never assumes an algorithm the archive does not record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IdentityCheck {
+    pub outcome: IdentityOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityOutcome {
+    Checked,
+    Mismatch,
+    NotCheckable,
+}
+
+/// `vxtelemetry verify`'s exit code when every check that could run passed but the identity is
+/// not checkable. Not 2, which is the usage-error code.
+pub const EXIT_NOT_CHECKABLE: i32 = 3;
+
+impl Verification {
+    fn package_ok(&self) -> bool {
+        self.package_digest
+            .as_ref()
+            .is_none_or(|d| d.recorded == d.computed)
+    }
+
+    /// 0: verified. 1: the index, the identity or the package digest does not match.
+    /// [`EXIT_NOT_CHECKABLE`]: nothing failed, but the identity is not checkable.
+    pub fn exit_code(&self) -> i32 {
+        if self.ok {
+            0
+        } else if self.index != Some(false)
+            && self.identity.outcome == IdentityOutcome::NotCheckable
+            && self.package_ok()
+        {
+            EXIT_NOT_CHECKABLE
+        } else {
+            1
+        }
+    }
+
+    /// One line for a person: what passed, what failed, or why the identity is not checkable.
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        match self.index {
+            Some(true) => parts.push("index OK".to_string()),
+            Some(false) => parts.push("index MISMATCH".to_string()),
+            None => {}
+        }
+        parts.push(match self.identity.outcome {
+            IdentityOutcome::Checked => "identity OK".to_string(),
+            IdentityOutcome::Mismatch => "identity MISMATCH".to_string(),
+            IdentityOutcome::NotCheckable => format!(
+                "identity not checkable: {}",
+                self.identity.reason.as_deref().unwrap_or("no reason given")
+            ),
+        });
+        if self.package_digest.is_some() {
+            parts.push(if self.package_ok() {
+                "package digest OK".into()
+            } else {
+                "package digest MISMATCH".into()
+            });
+        }
+        parts.join("; ")
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -349,17 +431,26 @@ pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
         }),
         None => None,
     };
-    Ok(Verification {
-        ok: computed == recorded
-            && package_digest
-                .as_ref()
-                .is_none_or(|d| d.recorded == d.computed),
-        algorithm,
-        recorded,
-        computed,
+    let outcome = if computed == recorded {
+        IdentityOutcome::Checked
+    } else {
+        IdentityOutcome::Mismatch
+    };
+    let mut v = Verification {
+        ok: false,
+        index: None,
+        identity: IdentityCheck {
+            outcome,
+            reason: None,
+        },
+        algorithm: Some(algorithm),
+        recorded: Some(recorded),
+        computed: Some(computed),
         files: inputs.len(),
         package_digest,
-    })
+    };
+    v.ok = outcome == IdentityOutcome::Checked && v.package_ok();
+    Ok(v)
 }
 
 #[cfg(test)]
