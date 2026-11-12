@@ -400,6 +400,36 @@ mod tests {
     }
 
     #[test]
+    fn the_daemons_tools_are_recorded_as_given() {
+        let (tmp, view, ingest) = fixture("tools");
+        let tools = r#"[{"name":"vxprobe","path":"/opt/vx/vxprobe","version":"0.2.2","sha256":"ab","profile":"release"}]"#;
+        std::fs::write(ingest.join(crate::archive::TOOLS_FILE), tools).unwrap();
+        let out = tmp.join("tools.zip");
+        collect(&view, &ingest, &out, None).unwrap();
+        let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let mut text = String::new();
+        zip.by_name("metadata.json")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            metadata["tools"],
+            serde_json::from_str::<serde_json::Value>(tools).unwrap()
+        );
+
+        // Anything but a list is not the daemon's tools, and is left out.
+        std::fs::write(
+            ingest.join(crate::archive::TOOLS_FILE),
+            r#"{"vxprobe":"0.2.2"}"#,
+        )
+        .unwrap();
+        let meta = collect(&view, &ingest, &tmp.join("not-a-list.zip"), None).unwrap();
+        assert!(meta.tools.is_none());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn a_v2_archive_lists_checks_and_reads_back_its_records() {
         let (tmp, view, ingest) = fixture("roundtrip");
         let out = tmp.join("run.zip");
