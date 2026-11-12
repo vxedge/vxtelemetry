@@ -6,6 +6,11 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-13
+
+`verify` tells a checked identity, a mismatch and an identity it cannot check apart, and never
+assumes an algorithm.
+
 ### Fixed
 
 - `vxtelemetry verify` no longer reports a mismatch for a v2 archive whose identity it cannot
