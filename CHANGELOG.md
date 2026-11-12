@@ -6,6 +6,13 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `collect` records the ingest folder's `tools.json` as `tools` in `metadata.json`, in archive v1
+  and v2 alike: the tool binaries the run's daemon runs, each with its `name`, `path`, `version`,
+  `sha256` and `profile`. vxedged writes the file at every collect (X9.14). It is recorded as
+  given, and absent when there is no such file or it is not a list.
+
 ## [0.6.0] - 2026-11-10
 
 Archives know which campaign trial they are. `collect` records the trial's identity from the

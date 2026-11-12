@@ -65,6 +65,11 @@ pub struct ArchiveMetadata {
     /// campaign. Recorded as given, so the runner owns its shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trial: Option<serde_json::Value>,
+    /// The tool binaries the run's daemon runs, as it wrote them to the ingest folder's
+    /// `tools.json`: per tool its `name`, `path`, `version`, `sha256` and `profile`. Absent when
+    /// the daemon wrote none. Recorded as given, so the daemon owns its shape.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<serde_json::Value>,
 }
 
 /// The running kernel, read the way `vxedge-core` reads it and independently of it.
@@ -187,6 +192,10 @@ pub(crate) fn metadata_for(
         .ok()
         .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
         .filter(serde_json::Value::is_object);
+    let tools = std::fs::read(ingest_dir.join(TOOLS_FILE))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .filter(serde_json::Value::is_array);
     let ingest_stats: Option<IngestStats> = std::fs::read(ingest_dir.join("ingest-stats.json"))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok());
@@ -205,11 +214,15 @@ pub(crate) fn metadata_for(
         image_digests,
         kernel: Kernel::probe(),
         trial,
+        tools,
     }
 }
 
 /// The file in the ingest folder a campaign runner writes the trial's identity to.
 pub const TRIAL_FILE: &str = "trial.json";
+
+/// The file in the ingest folder the daemon writes the provenance of its tool binaries to.
+pub const TOOLS_FILE: &str = "tools.json";
 
 /// Create `out` (zip) from the ingest dir + the source workspace + metadata.
 pub fn collect(
@@ -400,9 +413,11 @@ mod tests {
             image_digests: None,
             kernel: None,
             trial: None,
+            tools: None,
         };
         let json = serde_json::to_value(&meta).unwrap();
         assert!(json.get("image_digests").is_none());
+        assert!(json.get("tools").is_none());
 
         let mut digests = BTreeMap::new();
         digests.insert("vx5g-core".to_string(), "abc".to_string());
