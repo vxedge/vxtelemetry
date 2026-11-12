@@ -6,6 +6,11 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-12
+
+Archives name the tools behind them. `collect` records the tool binaries the run's daemon runs as
+`tools` in `metadata.json`, for vxedge 0.24.0. Additive: nothing else in the archive changes.
+
 ### Added
 
 - `collect` records the ingest folder's `tools.json` as `tools` in `metadata.json`, in archive v1
