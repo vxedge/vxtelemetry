@@ -6,6 +6,12 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `metadata.json` records `time_sync` when the experiment declares `network.time_sync`: its `kind` (`gptp`), its
+  `followers`, and `timestamping: software` and `servo: free-running`, since vxedge runs `ptp4l` with software
+  timestamps and its container followers share the host clock. Absent otherwise.
+
 ## [0.9.0] - 2026-11-13
 
 `metadata.json` records how the gateway shaped the uplink, so archives from a gate schedule and from the HTB
