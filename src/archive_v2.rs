@@ -1,10 +1,10 @@
-//! **Archive v2** (`ARCHITECTURE.md` §12, decisions X-7 and X-15): one zip per run, whose large
-//! record files are zstd-compressed members, readable by any zip reader and by Python's standard
+//! **The results archive**, `vxarchive/2` (`ARCHITECTURE.md` §12, decisions X-7 and X-15): one
+//! zip per run, whose large record files are zstd-compressed members, readable by any zip reader and by Python's standard
 //! library from 3.14 (`zipfile` and `compression.zstd`).
 //!
 //! ```text
 //! index.json                  schema vxarchive/2; every other member with its size and sha256
-//! metadata.json               identity, package, kernel, ingest stats (as v1, plus `archive`)
+//! metadata.json               identity, package, kernel, ingest stats, `archive: vxarchive/2`
 //! package/                    the workspace's identity inputs, so re-hashing gives the identity
 //! entities.json               the entity paths records name, as vxedged mapped them
 //! metrics/samples.jsonl.zst   `sample` and `gap` records
@@ -13,8 +13,9 @@
 //! events.jsonl                vxAPI events, when the ingest folder holds them
 //! ```
 //!
-//! v1 archives stay readable: [`records`] turns a v1 `ingest/samples.jsonl` into the same
-//! `sample` records, named by `host` unless the archive carries `entities.json`.
+//! This is the only format written and read. A `vxarchive/1` archive (no `index.json`;
+//! `workspace/` and `ingest/` members) is refused with [`V1_REFUSED`]: the frozen result sets are
+//! republished in `vxarchive/2`.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -25,7 +26,7 @@ use sha2::Digest;
 
 use crate::TelemetryError;
 use crate::archive::{ArchiveMetadata, DigestCheck, IdentityCheck, IdentityOutcome, Verification};
-use crate::records::{Entities, Record};
+use crate::records::Record;
 use crate::workspace_view::WorkspaceView;
 
 /// The schema `index.json` names.
@@ -68,8 +69,7 @@ pub fn collect(
     out: &Path,
     image_digests: Option<BTreeMap<String, String>>,
 ) -> Result<ArchiveMetadata, TelemetryError> {
-    let mut metadata = crate::archive::metadata_for(workspace, ingest_dir, image_digests);
-    metadata.archive = Some(SCHEMA.to_string());
+    let metadata = crate::archive::metadata_for(workspace, ingest_dir, image_digests);
 
     let mut members: Vec<(String, Vec<u8>)> = Vec::new();
     members.push((
@@ -172,13 +172,31 @@ fn members_of(archive: &Path) -> Result<BTreeMap<String, Vec<u8>>, TelemetryErro
     Ok(out)
 }
 
-/// Whether `archive` is an archive v2: it holds an `index.json` naming [`SCHEMA`].
-pub fn is_v2(archive: &Path) -> bool {
-    members_of(archive)
-        .ok()
-        .and_then(|m| m.get("index.json").cloned())
-        .and_then(|b| serde_json::from_slice::<Index>(&b).ok())
-        .is_some_and(|i| i.schema == SCHEMA)
+/// Why a `vxarchive/1` archive is refused.
+pub const V1_REFUSED: &str = "a vxarchive/1 archive (no index.json), which is no longer read; the \
+     frozen result sets are republished in vxarchive/2 (Zenodo 2026-11-v2)";
+
+/// The members of `archive` and its index, once the index names [`SCHEMA`]. Anything else is
+/// refused with the reason: a `vxarchive/1` archive, another schema, or not a results archive.
+fn open(archive: &Path) -> Result<(BTreeMap<String, Vec<u8>>, Index), TelemetryError> {
+    let members = members_of(archive)?;
+    let bad = |m: String| TelemetryError::Archive(format!("`{}`: {m}", archive.display()));
+    let Some(bytes) = members.get("index.json") else {
+        return Err(bad(if members.contains_key("metadata.json") {
+            V1_REFUSED.to_string()
+        } else {
+            format!("no index.json; not a {SCHEMA} results archive")
+        }));
+    };
+    let index: Index =
+        serde_json::from_slice(bytes).map_err(|e| bad(format!("index.json: {e}")))?;
+    if index.schema != SCHEMA {
+        return Err(bad(format!(
+            "index.json names schema `{}`; this build reads only {SCHEMA}",
+            index.schema
+        )));
+    }
+    Ok((members, index))
 }
 
 /// Why an archive's identity is not checkable: it records an identity but no algorithm. Archives
@@ -197,14 +215,8 @@ pub const NO_IDENTITY: &str = "metadata.json records no workspace identity";
 /// not checkable with the reason: `package/` is re-hashed only under the algorithm the archive
 /// records, never an assumed one. The package digest is checked when the archive records one.
 pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
-    let members = members_of(archive)?;
+    let (members, index) = open(archive)?;
     let bad = |m: String| TelemetryError::Archive(format!("`{}`: {m}", archive.display()));
-    let index: Index = serde_json::from_slice(
-        members
-            .get("index.json")
-            .ok_or_else(|| bad("no index.json".into()))?,
-    )
-    .map_err(|e| bad(format!("index.json: {e}")))?;
     let listed: BTreeMap<&str, &IndexEntry> =
         index.files.iter().map(|e| (e.path.as_str(), e)).collect();
     let mut index_ok = members.len() == listed.len() + 1;
@@ -265,7 +277,7 @@ pub fn verify(archive: &Path) -> Result<Verification, TelemetryError> {
         .is_none_or(|d| d.recorded == d.computed);
     Ok(Verification {
         ok: index_ok && identity.outcome == IdentityOutcome::Checked && package_ok,
-        index: Some(index_ok),
+        index: index_ok,
         identity,
         algorithm,
         recorded,
@@ -282,9 +294,9 @@ fn not_checkable(reason: &str) -> IdentityCheck {
     }
 }
 
-/// Every record an archive holds, v1 or v2, in file order: samples and gaps, then phases.
+/// Every record an archive holds, in file order: samples and gaps, then phases.
 pub fn records(archive: &Path) -> Result<Vec<Record>, TelemetryError> {
-    let members = members_of(archive)?;
+    let (members, _) = open(archive)?;
     let mut out = Vec::new();
     let mut push_lines = |text: &str| -> Result<(), TelemetryError> {
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
@@ -295,48 +307,18 @@ pub fn records(archive: &Path) -> Result<Vec<Record>, TelemetryError> {
     if let Some(compressed) = members.get(SAMPLES) {
         let bytes = zstd::decode_all(compressed.as_slice()).map_err(arch)?;
         push_lines(&String::from_utf8_lossy(&bytes))?;
-        if let Some(phases) = members.get(PHASES) {
-            push_lines(&String::from_utf8_lossy(phases))?;
-        }
-        return Ok(out);
     }
-    // v1: the ingest folder's samples, in their older shape.
-    let entities = {
-        let dir = std::env::temp_dir().join(format!("vxtel-v1-{}", std::process::id()));
-        match members.get("ingest/entities.json") {
-            Some(bytes) => {
-                std::fs::create_dir_all(&dir)?;
-                std::fs::write(dir.join(ENTITIES), bytes)?;
-                let e = Entities::load(&dir);
-                let _ = std::fs::remove_dir_all(&dir);
-                e
-            }
-            None => Entities::default(),
-        }
-    };
-    if let Some(bytes) = members.get("ingest/samples.jsonl") {
-        for line in String::from_utf8_lossy(bytes)
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-        {
-            let v: serde_json::Value = serde_json::from_str(line).map_err(arch)?;
-            out.push(Record::Sample {
-                ts_ns: v["ts_unix_ms"].as_i64().unwrap_or(0) * 1_000_000,
-                entity: entities.of(v["target"].as_str().unwrap_or("")).to_string(),
-                metric: v["metric"].as_str().unwrap_or("").to_string(),
-                labels: crate::records::parse_labels(v["labels"].as_str().unwrap_or("")),
-                value: v["value"].as_f64().unwrap_or(f64::NAN),
-            });
-        }
+    if let Some(phases) = members.get(PHASES) {
+        push_lines(&String::from_utf8_lossy(phases))?;
     }
     Ok(out)
 }
 
-/// Every `log` record a v2 archive holds, entity by entity in member order, each entity's lines
-/// in the order they were read. A v1 archive, or a run that logged nothing, has none.
+/// Every `log` record an archive holds, entity by entity in member order, each entity's lines in
+/// the order they were read. A run that logged nothing has none.
 pub fn logs(archive: &Path) -> Result<Vec<Record>, TelemetryError> {
     let mut out = Vec::new();
-    for (name, compressed) in members_of(archive)? {
+    for (name, compressed) in open(archive)?.0 {
         if !(name.starts_with("logs/") && name.ends_with(".jsonl.zst")) {
             continue;
         }
@@ -395,12 +377,6 @@ mod tests {
                 r#"{"record":"log","ts_ns":20,"entity":"car/front/ecu1","stream":"serial","line":"ready"}"#,
                 "\n"
             ),
-        )
-        .unwrap();
-        // The v1 shape too, which a v2 archive leaves out.
-        std::fs::write(
-            ingest.join("samples.jsonl"),
-            r#"{"ts_unix_ms":1,"target":"10.1.0.2:9801","metric":"m","labels":"{q=\"1\"}","value":2.0}"#,
         )
         .unwrap();
         let view = WorkspaceView::load(&ws).unwrap();
@@ -471,8 +447,7 @@ mod tests {
         let (tmp, view, ingest) = fixture("roundtrip");
         let out = tmp.join("run.zip");
         let meta = collect(&view, &ingest, &out, None).unwrap();
-        assert_eq!(meta.archive.as_deref(), Some(SCHEMA));
-        assert!(is_v2(&out));
+        assert_eq!(meta.archive, SCHEMA);
         let members = members_of(&out).unwrap();
         for m in [
             "index.json",
@@ -537,7 +512,7 @@ mod tests {
         zip.finish().unwrap();
         let v = verify(&forged).unwrap();
         assert!(!v.ok, "{v:?}");
-        assert_eq!(v.index, Some(false));
+        assert!(!v.index);
         assert_eq!(v.identity.outcome, IdentityOutcome::Checked);
         assert_eq!(v.recorded, v.computed, "the identity alone still matches");
         assert_eq!(v.exit_code(), 1);
@@ -594,7 +569,7 @@ mod tests {
         collect(&view, &ingest, &out, None).unwrap();
         let v = verify(&out).unwrap();
         assert!(v.ok, "{v:?}");
-        assert_eq!(v.index, Some(true));
+        assert!(v.index);
         assert_eq!(v.identity.outcome, IdentityOutcome::Checked);
         assert_eq!(v.identity.reason, None);
         assert_eq!(v.algorithm.as_deref(), Some(crate::identity::CURRENT));
@@ -620,7 +595,7 @@ id: e3
         reindexed(&members, &forged);
         let v = verify(&forged).unwrap();
         assert!(!v.ok, "{v:?}");
-        assert_eq!(v.index, Some(true), "the index was rewritten to match");
+        assert!(v.index, "the index was rewritten to match");
         assert_eq!(v.identity.outcome, IdentityOutcome::Mismatch);
         assert_ne!(v.recorded, v.computed);
         assert_eq!(v.exit_code(), 1);
@@ -642,7 +617,7 @@ id: e3
         reindexed(&members, &old);
         let v = verify(&old).unwrap();
         assert!(!v.ok, "{v:?}");
-        assert_eq!(v.index, Some(true));
+        assert!(v.index);
         assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
         assert_eq!(v.identity.reason.as_deref(), Some(NO_ALGORITHM));
         assert_eq!(
@@ -674,7 +649,7 @@ id: e3
         let old = tmp.join("old.zip");
         reindexed(&members, &old);
         let v = verify(&old).unwrap();
-        assert_eq!(v.index, Some(true));
+        assert!(v.index);
         assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
         assert_eq!(v.identity.reason.as_deref(), Some(MANIFEST_ONLY));
         assert_eq!(v.recorded, None);
@@ -692,29 +667,145 @@ id: e3
         }
         zip.finish().unwrap();
         let v = verify(&forged).unwrap();
-        assert_eq!(v.index, Some(false));
+        assert!(!v.index);
         assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
         assert_eq!(v.exit_code(), 1);
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// A `vxarchive/1` archive (a `metadata.json`, the workspace under `workspace/`, the ingest
+    /// folder under `ingest/`, no `index.json`) is refused by every reader, naming the format that
+    /// replaced it.
     #[test]
-    fn a_v1_archive_reads_as_the_same_records() {
-        let (tmp, view, ingest) = fixture("v1");
-        std::fs::remove_file(ingest.join("records.jsonl")).unwrap();
-        let out = tmp.join("v1.zip");
-        crate::archive::collect(&view, &ingest, &out, None).unwrap();
-        assert!(!is_v2(&out));
-        let recs = records(&out).unwrap();
+    fn a_v1_archive_is_refused_naming_the_current_format() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-v1-refused-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let v1 = tmp.join("v1.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&v1).unwrap());
+        for (p, b) in [
+            ("metadata.json", r#"{"workspace_sha256":"00"}"#),
+            ("workspace/main.yaml", "kind: experiment\nid: e\n"),
+            ("ingest/samples.jsonl", ""),
+        ] {
+            zip.start_file(p, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(b.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+        for err in [
+            verify(&v1).unwrap_err(),
+            records(&v1).unwrap_err(),
+            logs(&v1).unwrap_err(),
+        ] {
+            let err = err.to_string();
+            assert!(err.contains(V1_REFUSED), "{err}");
+            assert!(err.contains("vxarchive/2"), "{err}");
+        }
+
+        // A zip that is no results archive at all is not called a v1 archive.
+        let other = tmp.join("other.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&other).unwrap());
+        zip.start_file("readme.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.finish().unwrap();
+        let err = verify(&other).unwrap_err().to_string();
+        assert!(err.contains("not a vxarchive/2 results archive"), "{err}");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// G1: an archive is enough to re-run from and to check. Its `package/` holds every file the
+    /// identity covers, so unpacking it and re-hashing under the recorded algorithm gives back
+    /// `workspace_sha256`. Excluded files (`.git`, editor droppings) stay out.
+    #[test]
+    fn the_archived_package_rehashes_to_the_recorded_identity() {
+        let tmp = std::env::temp_dir().join(format!("vxtel-selfverify-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let ws = tmp.join("ws");
+        for (rel, body) in [
+            ("main.yaml", "kind: experiment\nid: exp-sv\n"),
+            (
+                "exp-sv.vxp",
+                "id: exp-sv\nversion: 0.1.0\nentry: main.yaml\n",
+            ),
+            ("parts/local-thing", "payload\n"),
+            ("scripts/run.sh", "#!/usr/bin/env bash\n"),
+            (".git/HEAD", "ref: refs/heads/main\n"),
+            ("main.yaml~", "backup\n"),
+        ] {
+            let p = ws.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, body).unwrap();
+        }
+        let ingest = tmp.join("ingest");
+        std::fs::create_dir_all(&ingest).unwrap();
+        let out = tmp.join("exp-sv.zip");
+        let view = WorkspaceView::load(&ws).unwrap();
+        let meta = collect(&view, &ingest, &out, None).unwrap();
+
+        let unpacked = tmp.join("unpacked");
+        let mut names = Vec::new();
+        for (name, bytes) in members_of(&out).unwrap() {
+            if let Some(rel) = name.strip_prefix(PACKAGE) {
+                names.push(rel.to_string());
+                let p = unpacked.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, bytes).unwrap();
+            }
+        }
         assert_eq!(
-            recs,
-            [Record::Sample {
-                ts_ns: 1_000_000,
-                entity: "car/front/ecu1".into(),
-                metric: "m".into(),
-                labels: BTreeMap::from([("q".to_string(), "1".to_string())]),
-                value: 2.0,
-            }]
+            names,
+            [
+                "exp-sv.vxp",
+                "main.yaml",
+                "parts/local-thing",
+                "scripts/run.sh"
+            ]
+        );
+        assert_eq!(
+            crate::identity::compute(&unpacked, &meta.workspace_identity_algorithm).unwrap(),
+            meta.workspace_sha256
+        );
+        let v = verify(&out).unwrap();
+        assert!(v.ok, "{v:?}");
+        assert_eq!(v.files, 4);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A `vxp/1` package's archive records its package digest, whether its lock was checked, and
+    /// the kernel; `verify` re-packs `package/` to the recorded digest, so the bytes shipped are
+    /// the package shared.
+    #[test]
+    fn a_vxp1_archive_records_and_verifies_its_package_digest() {
+        let (tmp, mut view, ingest) = fixture("pkgdigest");
+        view.package.as_mut().unwrap().locked = Some(false);
+        let out = tmp.join("run.zip");
+        let meta = collect(&view, &ingest, &out, None).unwrap();
+        let package = meta.package.as_ref().unwrap();
+        let digest = crate::package::digest(&view.inputs).unwrap();
+        assert_eq!(package.digest.as_deref(), Some(digest.as_str()));
+        assert_eq!(package.locked, Some(false));
+        #[cfg(target_os = "linux")]
+        assert!(!meta.kernel.as_ref().unwrap().release.is_empty());
+
+        let v = verify(&out).unwrap();
+        assert!(v.ok, "{v:?}");
+        assert_eq!(v.package_digest.as_ref().unwrap().computed, digest);
+
+        // A recorded digest the package does not pack to fails, even with the identity intact.
+        let members = with_metadata(&out, |m| {
+            m["package"]["digest"] = format!("sha256:{}", "0".repeat(64)).into();
+        });
+        let forged = tmp.join("forged.zip");
+        reindexed(&members, &forged);
+        let v = verify(&forged).unwrap();
+        assert!(!v.ok, "{v:?}");
+        assert_eq!(v.identity.outcome, IdentityOutcome::Checked);
+        assert_eq!(v.exit_code(), 1);
+        assert!(
+            v.summary().contains("package digest MISMATCH"),
+            "{}",
+            v.summary()
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
