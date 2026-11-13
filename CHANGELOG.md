@@ -6,6 +6,12 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-13
+
+`metadata.json` records how the gateway shaped the uplink, so archives from a gate schedule and from the HTB
+tree can be told apart. Pairs with vxedge 0.28.0, which adds `network.shaping`; with an earlier vxedge every
+archive reads `htb`, which is what it ran.
+
 ### Added
 
 - `metadata.json` records `shaping`: how the gateway shaped the uplink, `gate-schedule` when the experiment
