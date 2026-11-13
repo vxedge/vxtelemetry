@@ -6,6 +6,11 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-14
+
+`metadata.json` records the gateway's gPTP time sync when the experiment declares it, so an archive says
+how its clocks were related. Pairs with vxedge 0.30.0, which adds `network.time_sync`.
+
 ### Added
 
 - `metadata.json` records `time_sync` when the experiment declares `network.time_sync`: its `kind` (`gptp`), its
