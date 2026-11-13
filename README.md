@@ -12,16 +12,20 @@ vxedge is an open, all-software testbed for mapping 5G network slices onto zonal
 
 | Command | What |
 |---|---|
-| `vxtelemetry ingest` | Scrape the workspace's targets on an interval; persist raw and structured samples |
+| `vxtelemetry ingest` | Scrape the workspace's targets on an interval; append their records to the ingest directory |
 | `vxtelemetry sample` | Sample CPU% and RSS of processes matched by a cmdline regex |
-| `vxtelemetry collect` | Bundle the ingest directory, the source workspace and reproducibility metadata (including image digests) into one zip archive |
-| `vxtelemetry verify` | Check an archive: every member against its index (v2), the recorded workspace identity and the package digest. Exits 0 when all pass, 1 when one fails, 3 when nothing failed but the identity is not checkable (see below) |
-| `vxtelemetry records` | Print an archive's records, v1 or v2, as JSON Lines |
+| `vxtelemetry collect` | Bundle the ingest directory's records, the source workspace and reproducibility metadata (including image digests) into one `vxarchive/2` zip archive |
+| `vxtelemetry verify` | Check an archive: every member against its index, the recorded workspace identity and the package digest. Exits 0 when all pass, 1 when one fails, 3 when nothing failed but the identity is not checkable (see below) |
+| `vxtelemetry records` | Print an archive's records as JSON Lines |
+
+`vxarchive/2` is the only archive format written and read. A `vxarchive/1` archive is refused
+with an error (exit 1); the frozen result sets are republished in `vxarchive/2` (Zenodo
+2026-11-v2).
 
 ### Verify outcomes
 
-`verify` prints its result as JSON on stdout and one summary line on stderr. For a v2 archive, the
-index check is the integrity result. The identity is then one of three outcomes:
+`verify` prints its result as JSON on stdout and one summary line on stderr. The index check is
+the integrity result. The identity is then one of three outcomes:
 
 - **checked:** `package/`, re-hashed under the recorded `workspace_identity_algorithm`, gives the
   recorded `workspace_sha256`;

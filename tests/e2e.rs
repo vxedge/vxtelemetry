@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vxtelemetry::ingest::{IngestStats, scrape_round};
+use vxtelemetry::records::Record;
 use vxtelemetry::{archive, workspace_view::WorkspaceView};
 
 /// Minimal fake agent: answers every connection with a fixed exposition.
@@ -89,6 +90,7 @@ async fn ingest_then_collect_roundtrip() {
     // be absent from metadata.json, not null — the pre-existing shape).
     let out = tmp.join("exp-e2e.zip");
     let metadata = archive::collect(&view, &ingest_dir, &out, None).unwrap();
+    assert_eq!(metadata.archive, archive::SCHEMA);
     assert_eq!(metadata.experiment_id, "exp-e2e");
     assert_eq!(metadata.workspace_sha256.len(), 64);
     assert_eq!(metadata.workspace_identity_algorithm, "vxws/2");
@@ -99,26 +101,31 @@ async fn ingest_then_collect_roundtrip() {
     let names: Vec<String> = (0..zip.len())
         .map(|i| zip.by_index(i).unwrap().name().unwrap().to_string())
         .collect();
+    assert!(names.contains(&"index.json".to_string()));
     assert!(names.contains(&"metadata.json".to_string()));
+    assert!(names.contains(&"metrics/samples.jsonl.zst".to_string()));
     // The archive carries the workspace itself — every file, so it is re-runnable rather than
     // merely described.
-    assert!(names.contains(&"workspace/main.yaml".to_string()));
-    assert!(names.contains(&"workspace/vehicle.yaml".to_string()));
-    assert!(names.contains(&"workspace/exp-e2e.vxp".to_string()));
-    assert!(names.contains(&"ingest/samples.jsonl".to_string()));
+    assert!(names.contains(&"package/main.yaml".to_string()));
+    assert!(names.contains(&"package/vehicle.yaml".to_string()));
+    assert!(names.contains(&"package/exp-e2e.vxp".to_string()));
     assert!(
-        names.iter().filter(|n| n.ends_with(".prom")).count() == 2,
-        "two raw scrapes archived, got: {names:?}"
+        !names
+            .iter()
+            .any(|n| n.starts_with("ingest/") || n.ends_with(".prom")),
+        "no raw scrapes or ingest folder, got: {names:?}"
     );
 
-    // Samples are structured and parseable.
-    let mut samples = String::new();
-    zip.by_name("ingest/samples.jsonl")
-        .unwrap()
-        .read_to_string(&mut samples)
-        .unwrap();
-    assert_eq!(samples.lines().count(), 4);
-    assert!(samples.contains("vxprobe_rtt_seconds"));
+    // Samples are records, named by entity, and the archive checks out.
+    let samples: Vec<Record> = archive::records(&out).unwrap();
+    assert_eq!(samples.len(), 4);
+    assert!(
+        samples
+            .iter()
+            .any(|r| matches!(r, Record::Sample { metric, .. } if metric == "vxprobe_rtt_seconds")),
+        "{samples:?}"
+    );
+    assert!(archive::verify(&out).unwrap().ok);
     // No --record-image: metadata.json in the archive itself carries no
     // image_digests key at all.
     let mut meta_json = String::new();

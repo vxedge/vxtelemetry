@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Duration;
 use vxtelemetry::workspace_view::WorkspaceView;
-use vxtelemetry::{archive, ingest, sample};
+use vxtelemetry::{ingest, metadata, sample};
 
 #[derive(Parser)]
 #[command(
@@ -26,7 +26,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Scrape the workspace's targets on an interval; persist raw + structured samples.
+    /// Scrape the workspace's targets on an interval; append their records to the ingest dir.
     Ingest {
         /// The §6.0 experiment workspace directory.
         #[arg(long, alias = "manifest")]
@@ -49,7 +49,8 @@ enum Cmd {
         #[arg(long, default_value_t = 60)]
         duration_s: u64,
     },
-    /// Bundle ingest dir + the source workspace + reproducibility metadata into a zip.
+    /// Bundle the ingest dir's records, the source workspace and reproducibility metadata into a
+    /// `vxarchive/2` zip.
     Collect {
         /// The §6.0 experiment workspace directory.
         #[arg(long, alias = "manifest")]
@@ -72,20 +73,15 @@ enum Cmd {
         /// vxtelemetry without this option still collects.
         #[arg(long, env = "VXTELEMETRY_PACKAGE_LOCKED")]
         package_locked: Option<bool>,
-        /// The archive format: 1 (the default, which today's notebooks read) or 2
-        /// (`vxarchive/2`: entity-named records, zstd-compressed, an index of every member).
-        #[arg(long, env = "VXTELEMETRY_ARCHIVE_VERSION", default_value_t = 1,
-              value_parser = clap::value_parser!(u8).range(1..=2))]
-        archive_version: u8,
     },
-    /// Check an archive. For v2, every member against `index.json`; then the identity: the
-    /// workspace (`package/` in v2, `workspace/` in v1) re-hashed under the recorded algorithm
-    /// and compared with the recorded `workspace_sha256`; and the package digest, when recorded.
+    /// Check a `vxarchive/2` archive: every member against `index.json`; then the identity:
+    /// `package/` re-hashed under the recorded algorithm and compared with the recorded
+    /// `workspace_sha256`; and the package digest, when recorded.
     ///
     /// The identity is checked, a mismatch, or not checkable. It is not checkable when the
     /// archive records no algorithm (written before identity algorithms were recorded, holding
     /// only the documents) or only a `manifest_sha256` (written before workspace identities); no
-    /// algorithm is ever assumed. A v1 archive that records no algorithm is refused.
+    /// algorithm is ever assumed. A `vxarchive/1` archive is refused (exit 1).
     ///
     /// Prints the result as JSON on stdout and one summary line on stderr. Exit codes: 0 every
     /// check passed; 1 the index, the identity or the package digest does not match, or the
@@ -95,11 +91,11 @@ enum Cmd {
         /// The results archive (`.zip`) written by `collect`.
         archive: PathBuf,
     },
-    /// Print an archive's records, v1 or v2, as JSON Lines: samples and gaps, then phases.
+    /// Print a `vxarchive/2` archive's records as JSON Lines: samples and gaps, then phases.
     Records {
         /// The results archive (`.zip`).
         archive: PathBuf,
-        /// Print its `log` records instead, entity by entity (v2 only).
+        /// Print its `log` records instead, entity by entity.
         #[arg(long)]
         logs: bool,
     },
@@ -176,7 +172,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             out,
             record_images,
             package_locked,
-            archive_version,
         } => {
             let metadata = tokio::task::spawn_blocking(move || {
                 let mut view = WorkspaceView::load(&workspace)?;
@@ -186,13 +181,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let image_digests = if record_images.is_empty() {
                     None
                 } else {
-                    Some(archive::resolve_image_digests(&record_images))
+                    Some(metadata::resolve_image_digests(&record_images))
                 };
-                if archive_version == 2 {
-                    vxtelemetry::archive_v2::collect(&view, &ingest_dir, &out, image_digests)
-                } else {
-                    archive::collect(&view, &ingest_dir, &out, image_digests)
-                }
+                vxtelemetry::archive::collect(&view, &ingest_dir, &out, image_digests)
             })
             .await??;
             println!("{}", serde_json::to_string_pretty(&metadata)?);
@@ -200,9 +191,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Cmd::Records { archive, logs } => {
             let recs = tokio::task::spawn_blocking(move || {
                 if logs {
-                    vxtelemetry::archive_v2::logs(&archive)
+                    vxtelemetry::archive::logs(&archive)
                 } else {
-                    vxtelemetry::archive_v2::records(&archive)
+                    vxtelemetry::archive::records(&archive)
                 }
             })
             .await??;
@@ -213,14 +204,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Cmd::Verify { archive } => {
-            let v = tokio::task::spawn_blocking(move || {
-                if vxtelemetry::archive_v2::is_v2(&archive) {
-                    vxtelemetry::archive_v2::verify(&archive)
-                } else {
-                    archive::verify(&archive)
-                }
-            })
-            .await??;
+            let v = tokio::task::spawn_blocking(move || vxtelemetry::archive::verify(&archive))
+                .await??;
             println!("{}", serde_json::to_string_pretty(&v)?);
             eprintln!("vxtelemetry verify: {}", v.summary());
             let code = v.exit_code();

@@ -1,7 +1,6 @@
-//! Ingestion loop: scrape every manifest target on an interval, persist raw
-//! expositions and structured samples under the ingest dir, track
-//! completeness (ingestion rate and completeness are themselves reported
-//! metrics — §12).
+//! Ingestion loop: scrape every workspace target on an interval, append the records it gives
+//! to the ingest dir's `records.jsonl`, track completeness (ingestion rate and completeness are
+//! themselves reported metrics — §12).
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -41,22 +40,6 @@ impl IngestStats {
     }
 }
 
-fn sanitize(target: &str) -> String {
-    target
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
-}
-
-#[derive(Serialize)]
-struct SampleRecord<'a> {
-    ts_unix_ms: i64,
-    target: &'a str,
-    metric: &'a str,
-    labels: &'a str,
-    value: f64,
-}
-
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -66,10 +49,10 @@ fn now_ms() -> i64 {
 
 /// One scrape round across all targets. Failures are counted, not fatal.
 ///
-/// Besides `samples.jsonl` (the v1 shape), each round appends v2 records to `records.jsonl`
-/// (`ARCHITECTURE.md` §12): a `sample` per value, named by the entity `entities.json` binds the
-/// target to, and a `gap` for a required target that did not answer, spanning the round. The
-/// round also reads what the entities' log files gained into `logs.jsonl`.
+/// Each round appends records to `records.jsonl` (`ARCHITECTURE.md` §12): a `sample` per value,
+/// named by the entity `entities.json` binds the target to, and a `gap` for a required target
+/// that did not answer, spanning the round. The round also reads what the entities' log files
+/// gained into `logs.jsonl`.
 pub async fn scrape_round(
     targets: &[ScrapeTarget],
     ingest_dir: &Path,
@@ -96,20 +79,13 @@ async fn scrape_round_into(
     logs: &mut crate::logs::Tailer,
     interval: Duration,
 ) -> Result<(), TelemetryError> {
-    let ts = now_ms();
-    let ts_ns = ts * 1_000_000;
+    let ts_ns = now_ms() * 1_000_000;
     let mut records = tokio::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(ingest_dir.join("records.jsonl"))
         .await?;
-    let mut v2 = String::new();
-    let samples_path = ingest_dir.join("samples.jsonl");
-    let mut samples_file = tokio::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&samples_path)
-        .await?;
+    let mut lines = String::new();
 
     for target in targets {
         match scrape::fetch_metrics(&target.address).await {
@@ -119,10 +95,6 @@ async fn scrape_round_into(
                 } else {
                     stats.scrapes_ok += 1;
                 }
-                let raw_dir = ingest_dir.join("raw").join(sanitize(&target.address));
-                tokio::fs::create_dir_all(&raw_dir).await?;
-                tokio::fs::write(raw_dir.join(format!("{ts}.prom")), &body).await?;
-                let mut lines = String::new();
                 let entity = entities.of(&target.address);
                 for s in promtext::parse(&body) {
                     stats.samples_total += 1;
@@ -139,19 +111,9 @@ async fn scrape_round_into(
                         labels,
                         value: s.value,
                     };
-                    v2.push_str(&serde_json::to_string(&rec).expect("serializable record"));
-                    v2.push('\n');
-                    let record = SampleRecord {
-                        ts_unix_ms: ts,
-                        target: &target.address,
-                        metric: &s.metric,
-                        labels: &s.labels,
-                        value: s.value,
-                    };
-                    lines.push_str(&serde_json::to_string(&record).expect("serializable record"));
+                    lines.push_str(&serde_json::to_string(&rec).expect("serializable record"));
                     lines.push('\n');
                 }
-                samples_file.write_all(lines.as_bytes()).await?;
             }
             Err(e) => {
                 if target.optional {
@@ -165,18 +127,17 @@ async fn scrape_round_into(
                         to_ns: ts_ns + interval.as_nanos() as i64,
                         reason: format!("scrape of {} failed: {e}", target.address),
                     };
-                    v2.push_str(&serde_json::to_string(&rec).expect("serializable record"));
-                    v2.push('\n');
+                    lines.push_str(&serde_json::to_string(&rec).expect("serializable record"));
+                    lines.push('\n');
                 }
                 tracing::warn!(target = %target.address, error = %e, optional = target.optional, "scrape failed");
             }
         }
     }
-    records.write_all(v2.as_bytes()).await?;
+    records.write_all(lines.as_bytes()).await?;
     // A tokio file finishes writes on a background thread: without a flush the round can return,
     // and a reader see the file, before its records are written.
     records.flush().await?;
-    samples_file.flush().await?;
     // After this round's own records: the campaign runner's phase markers, in the order it wrote
     // them (`crate::phases`).
     crate::phases::drain(ingest_dir)?;
@@ -316,7 +277,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Each round also writes v2 records: samples named by the entity `entities.json` binds the
+    /// Each round writes records: samples named by the entity `entities.json` binds the
     /// target to, and a gap for a required target that did not answer.
     #[tokio::test]
     async fn a_round_writes_entity_samples_and_gaps() {
