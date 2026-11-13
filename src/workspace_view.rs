@@ -46,6 +46,19 @@ pub struct WorkspaceView {
     /// How the gateway shapes the uplink: `network.shaping.kind` (`gate-schedule`), or `htb`
     /// when the experiment declares no `shaping` and the HTB tree shapes it.
     pub shaping: String,
+    /// The gateway's time sync, `network.time_sync`, when the experiment declares one.
+    pub time_sync: Option<TimeSync>,
+}
+
+/// What an archive records about `network.time_sync` (`ARCHITECTURE.md` §6.0.3). vxedge runs every
+/// `ptp4l` with software timestamps, and its container followers share the host clock, so they run
+/// free and report their offset rather than steer a clock. Both are recorded so a result says so.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct TimeSync {
+    pub kind: String,
+    pub followers: Vec<String>,
+    pub timestamping: &'static str,
+    pub servo: &'static str,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
@@ -90,6 +103,16 @@ struct ExperimentDocView {
 struct NetworkBlock {
     #[serde(default)]
     shaping: Option<ShapingBlock>,
+    #[serde(default)]
+    time_sync: Option<TimeSyncBlock>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TimeSyncBlock {
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    followers: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -232,9 +255,19 @@ impl WorkspaceView {
             results: experiment.results,
             shaping: experiment
                 .network
-                .and_then(|n| n.shaping)
-                .and_then(|s| s.kind)
+                .as_ref()
+                .and_then(|n| n.shaping.as_ref())
+                .and_then(|s| s.kind.clone())
                 .unwrap_or_else(|| SHAPING_HTB.to_string()),
+            time_sync: experiment
+                .network
+                .and_then(|n| n.time_sync)
+                .map(|t| TimeSync {
+                    kind: t.kind.unwrap_or_else(|| "gptp".to_string()),
+                    followers: t.followers,
+                    timestamping: "software",
+                    servo: "free-running",
+                }),
         })
     }
 
@@ -407,6 +440,30 @@ results:
             &[("main.yaml", &gated), ("vehicle.yaml", VEHICLE)],
         );
         assert_eq!(WorkspaceView::load(&root).unwrap().shaping, "gate-schedule");
+    }
+
+    #[test]
+    fn time_sync_is_recorded_only_when_declared() {
+        let none = workspace("ts-none", &[("main.yaml", MAIN), ("vehicle.yaml", VEHICLE)]);
+        assert_eq!(WorkspaceView::load(&none).unwrap().time_sync, None);
+        let synced = MAIN.replace(
+            "    - { id: adas, mode: vlan, vlan: 101 }\n",
+            "    - { id: adas, mode: vlan, vlan: 101 }\n  time_sync:\n    kind: gptp\n    \
+             followers: [zonefl, hpc1]\n",
+        );
+        let root = workspace(
+            "ts-gptp",
+            &[("main.yaml", &synced), ("vehicle.yaml", VEHICLE)],
+        );
+        assert_eq!(
+            WorkspaceView::load(&root).unwrap().time_sync,
+            Some(TimeSync {
+                kind: "gptp".into(),
+                followers: vec!["zonefl".into(), "hpc1".into()],
+                timestamping: "software",
+                servo: "free-running",
+            })
+        );
     }
 
     #[test]
