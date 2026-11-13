@@ -6,6 +6,12 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `metadata.json` records `shaping`: how the gateway shaped the uplink, `gate-schedule` when the experiment
+  declares `network.shaping` (vxedge's IEEE 802.1Qbv gate schedule) and `htb` otherwise. A gate schedule gives
+  the uplink no line rate, so results from the two are compared knowing which is which.
+
 ## [0.8.0] - 2026-11-13
 
 `vxarchive/2` only (decision X-30). `collect` writes no other format and drops
