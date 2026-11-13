@@ -60,9 +60,12 @@ async fn ingest_then_collect_roundtrip() {
     )
     .await
     .unwrap();
-    tokio::fs::write(ws_dir.join("exp-e2e.vxp"), "id: exp-e2e\nversion: 0.1.0\n")
-        .await
-        .unwrap();
+    tokio::fs::write(
+        ws_dir.join("vxp.yaml"),
+        "schema: vxp/1\nid: vxedge/exp-e2e\nversion: 0.1.0\nentry: main.yaml\n",
+    )
+    .await
+    .unwrap();
 
     let view = WorkspaceView::load(&ws_dir).unwrap();
     let targets = view.scrape_targets();
@@ -94,7 +97,8 @@ async fn ingest_then_collect_roundtrip() {
     assert_eq!(metadata.experiment_id, "exp-e2e");
     assert_eq!(metadata.workspace_sha256.len(), 64);
     assert_eq!(metadata.workspace_identity_algorithm, "vxws/2");
-    assert_eq!(metadata.package.as_ref().unwrap().id, "exp-e2e");
+    assert_eq!(metadata.package.as_ref().unwrap().id, "vxedge/exp-e2e");
+    assert!(metadata.package.as_ref().unwrap().digest.is_some());
     assert!(metadata.image_digests.is_none());
 
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
@@ -108,7 +112,7 @@ async fn ingest_then_collect_roundtrip() {
     // merely described.
     assert!(names.contains(&"package/main.yaml".to_string()));
     assert!(names.contains(&"package/vehicle.yaml".to_string()));
-    assert!(names.contains(&"package/exp-e2e.vxp".to_string()));
+    assert!(names.contains(&"package/vxp.yaml".to_string()));
     assert!(
         !names
             .iter()

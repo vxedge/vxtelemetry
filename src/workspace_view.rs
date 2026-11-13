@@ -51,15 +51,14 @@ pub struct PackageIdentity {
     #[serde(default)]
     pub version: Option<String>,
     /// The package digest (`ARCHITECTURE.md` §6.0.7), computed here from the identity inputs for
-    /// a `vxp/1` package. `None` for a legacy descriptor, which has no packed form. Never read
-    /// from the descriptor.
+    /// a `vxp/1` package. Never read from the descriptor.
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
     /// Whether the daemon checked the package's lock at `up`, as it told `collect`. `None` when
     /// it said nothing: this tool never derives it.
     #[serde(skip_deserializing, skip_serializing_if = "Option::is_none")]
     pub locked: Option<bool>,
-    /// The descriptor's `schema`: `vxp/1`, or none for a legacy descriptor.
+    /// The descriptor's `schema`: `vxp/1`.
     #[serde(default, skip_serializing)]
     pub schema: Option<String>,
 }
@@ -116,7 +115,7 @@ pub struct ResultsBlock {
 impl WorkspaceView {
     /// Read a workspace directory: every `*.yaml` (non-recursive, as `vxedge-core` does — a
     /// `results/` archive containing YAML must not join the experiment) plus the descriptor,
-    /// `vxp.yaml` or a legacy `<name>.vxp`.
+    /// `vxp.yaml`. A legacy `<name>.vxp` descriptor is refused, as vxedge refuses it.
     pub fn load(root: &Path) -> Result<Self, TelemetryError> {
         let bad = |msg: String| TelemetryError::Manifest(msg);
         if !root.is_dir() {
@@ -152,9 +151,18 @@ impl WorkspaceView {
                 .to_string_lossy()
                 .to_string();
 
-            // The descriptor: `vxp.yaml` (vxedge 0.6.0, `ARCHITECTURE.md` §6.0.3), or a legacy
-            // `<name>.vxp`. It is not a document, so it never reaches the `kind` parse below.
-            if name == DESCRIPTOR_FILE || path.extension().and_then(|e| e.to_str()) == Some("vxp") {
+            // A legacy `<name>.vxp` descriptor is no longer read (decision X-30).
+            if path.extension().and_then(|e| e.to_str()) == Some("vxp") {
+                return Err(bad(format!(
+                    "`{name}` in `{}` is a legacy `<name>.vxp` descriptor, which is no longer \
+                     read; the package format is `vxp.yaml` with `schema: vxp/1` (vxedge \
+                     `pkg lock` writes its lock)",
+                    root.display()
+                )));
+            }
+            // The descriptor: `vxp.yaml` (`ARCHITECTURE.md` §6.0.3). It is not a document, so it
+            // never reaches the `kind` parse below.
+            if name == DESCRIPTOR_FILE {
                 package = serde_yaml_ng::from_slice::<PackageIdentity>(&bytes).ok();
                 continue;
             }
@@ -278,7 +286,7 @@ results:
 "#;
 
     const VEHICLE: &str = "kind: vehicle\nid: veh\ndevices: {}\n";
-    const VXP: &str = "id: exp-001\nversion: 0.1.0\nentry: main.yaml\n";
+    const VXP: &str = "schema: vxp/1\nid: vxedge/exp-001\nversion: 0.1.0\nentry: main.yaml\n";
 
     #[test]
     fn reads_the_experiment_document_and_ignores_the_rest_of_the_workspace() {
@@ -287,21 +295,37 @@ results:
             &[
                 ("main.yaml", MAIN),
                 ("vehicle.yaml", VEHICLE),
-                ("exp-001.vxp", VXP),
+                ("vxp.yaml", VXP),
             ],
         );
         let v = WorkspaceView::load(&root).unwrap();
         assert_eq!(v.experiment_id, "exp-001");
         assert_eq!(v.scrape_targets().len(), 2);
         assert_eq!(v.artifact_dir(), Some("results/exp-001"));
-        assert_eq!(
-            v.package,
-            Some(PackageIdentity {
-                id: "exp-001".into(),
-                version: Some("0.1.0".into()),
-                ..Default::default()
-            }),
-            "a legacy descriptor has no package digest"
+        let p = v.package.expect("vxp.yaml names the package");
+        assert_eq!(p.id, "vxedge/exp-001");
+        assert!(p.digest.is_some(), "a vxp/1 package has a digest");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// Decision X-30: a legacy `<name>.vxp` descriptor is refused, with the current format named.
+    #[test]
+    fn a_legacy_descriptor_is_refused() {
+        let root = workspace(
+            "legacy",
+            &[
+                ("main.yaml", MAIN),
+                ("vehicle.yaml", VEHICLE),
+                (
+                    "exp-001.vxp",
+                    "id: exp-001\nversion: 0.1.0\nentry: main.yaml\n",
+                ),
+            ],
+        );
+        let e = WorkspaceView::load(&root).unwrap_err().to_string();
+        assert!(
+            e.contains("legacy `<name>.vxp` descriptor") && e.contains("vxp.yaml"),
+            "{e}"
         );
         std::fs::remove_dir_all(&root).ok();
     }
