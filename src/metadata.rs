@@ -1,7 +1,7 @@
 //! What a results archive records and what checking one found: the reproducibility metadata
 //! (§13: experiment ID, workspace identity, tool version, and — when the caller opts in via
 //! `--record-image` — container image digests), and the outcome of `verify`. The archive itself
-//! is written and read by [`crate::archive_v2`].
+//! is written and read by [`crate::archive`].
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -169,7 +169,7 @@ pub(crate) fn metadata_for(
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok());
     ArchiveMetadata {
-        archive: crate::archive_v2::SCHEMA.to_string(),
+        archive: crate::archive::SCHEMA.to_string(),
         experiment_id: workspace.experiment_id.clone(),
         workspace_sha256: workspace.content_sha256(),
         workspace_identity_algorithm: workspace.identity_algorithm().to_string(),
@@ -193,7 +193,7 @@ pub const TRIAL_FILE: &str = "trial.json";
 /// The file in the ingest folder the daemon writes the provenance of its tool binaries to.
 pub const TOOLS_FILE: &str = "tools.json";
 
-/// What [`crate::archive_v2::verify`] found: whether the members match the index, what could be
+/// What [`crate::archive::verify`] found: whether the members match the index, what could be
 /// said about the recorded workspace identity, and the package digest check when the archive
 /// records one.
 #[derive(Debug, Serialize)]

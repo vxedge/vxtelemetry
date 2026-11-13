@@ -7,7 +7,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vxtelemetry::ingest::{IngestStats, scrape_round};
 use vxtelemetry::records::Record;
-use vxtelemetry::{archive_v2, workspace_view::WorkspaceView};
+use vxtelemetry::{archive, workspace_view::WorkspaceView};
 
 /// Minimal fake agent: answers every connection with a fixed exposition.
 async fn fake_agent() -> std::net::SocketAddr {
@@ -89,8 +89,8 @@ async fn ingest_then_collect_roundtrip() {
     // Collect and verify the archive (no --record-image: image_digests must
     // be absent from metadata.json, not null — the pre-existing shape).
     let out = tmp.join("exp-e2e.zip");
-    let metadata = archive_v2::collect(&view, &ingest_dir, &out, None).unwrap();
-    assert_eq!(metadata.archive, archive_v2::SCHEMA);
+    let metadata = archive::collect(&view, &ingest_dir, &out, None).unwrap();
+    assert_eq!(metadata.archive, archive::SCHEMA);
     assert_eq!(metadata.experiment_id, "exp-e2e");
     assert_eq!(metadata.workspace_sha256.len(), 64);
     assert_eq!(metadata.workspace_identity_algorithm, "vxws/2");
@@ -117,7 +117,7 @@ async fn ingest_then_collect_roundtrip() {
     );
 
     // Samples are records, named by entity, and the archive checks out.
-    let samples: Vec<Record> = archive_v2::records(&out).unwrap();
+    let samples: Vec<Record> = archive::records(&out).unwrap();
     assert_eq!(samples.len(), 4);
     assert!(
         samples
@@ -125,7 +125,7 @@ async fn ingest_then_collect_roundtrip() {
             .any(|r| matches!(r, Record::Sample { metric, .. } if metric == "vxprobe_rtt_seconds")),
         "{samples:?}"
     );
-    assert!(archive_v2::verify(&out).unwrap().ok);
+    assert!(archive::verify(&out).unwrap().ok);
     // No --record-image: metadata.json in the archive itself carries no
     // image_digests key at all.
     let mut meta_json = String::new();
@@ -140,7 +140,7 @@ async fn ingest_then_collect_roundtrip() {
     let out2 = tmp.join("exp-e2e-digests.zip");
     let mut digests = std::collections::BTreeMap::new();
     digests.insert("vx5g-core".to_string(), "sha256:feedface".to_string());
-    let metadata2 = archive_v2::collect(&view, &ingest_dir, &out2, Some(digests)).unwrap();
+    let metadata2 = archive::collect(&view, &ingest_dir, &out2, Some(digests)).unwrap();
     assert_eq!(
         metadata2.image_digests.as_ref().unwrap()["vx5g-core"],
         "sha256:feedface"

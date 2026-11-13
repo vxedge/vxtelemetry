@@ -7,7 +7,7 @@ use std::path::Path;
 use std::process::Command;
 
 use sha2::Digest;
-use vxtelemetry::archive_v2;
+use vxtelemetry::archive;
 use vxtelemetry::workspace_view::WorkspaceView;
 
 fn members(archive: &Path) -> BTreeMap<String, Vec<u8>> {
@@ -36,7 +36,7 @@ fn write_indexed(members: &BTreeMap<String, Vec<u8>>, out: &Path) {
             serde_json::json!({ "path": p, "size": b.len(), "sha256": format!("sha256:{sha}") })
         })
         .collect();
-    let index = serde_json::json!({ "schema": archive_v2::SCHEMA, "files": files });
+    let index = serde_json::json!({ "schema": archive::SCHEMA, "files": files });
     let mut zip = zip::ZipWriter::new(std::fs::File::create(out).unwrap());
     let opts = zip::write::SimpleFileOptions::default();
     zip.start_file("index.json", opts).unwrap();
@@ -72,7 +72,7 @@ fn verify_exit_codes_tell_checked_failed_and_not_checkable_apart() {
     std::fs::write(ws.join("main.yaml"), "kind: experiment\nid: e2\n").unwrap();
     let view = WorkspaceView::load(&ws).unwrap();
     let good = root.join("good.zip");
-    archive_v2::collect(&view, &ingest, &good, None).unwrap();
+    archive::collect(&view, &ingest, &good, None).unwrap();
 
     let (code, json, _) = verify(&good);
     assert_eq!((code, &json["identity"]["outcome"]), (0, &"checked".into()));
@@ -91,7 +91,7 @@ fn verify_exit_codes_tell_checked_failed_and_not_checkable_apart() {
     assert_eq!(code, 3, "{json}");
     assert_eq!(json["index"], true);
     assert_eq!(json["identity"]["outcome"], "not_checkable");
-    assert_eq!(json["identity"]["reason"], archive_v2::NO_ALGORITHM);
+    assert_eq!(json["identity"]["reason"], archive::NO_ALGORITHM);
     assert!(
         stderr.contains("index OK; identity not checkable"),
         "{stderr}"

@@ -62,7 +62,8 @@ fn arch(e: impl std::fmt::Display) -> TelemetryError {
     TelemetryError::Archive(e.to_string())
 }
 
-/// Write an archive v2 of `workspace` and what was ingested under `ingest_dir` to `out`.
+/// Write a `vxarchive/2` archive of `workspace` and what was ingested under `ingest_dir` to
+/// `out`.
 pub fn collect(
     workspace: &WorkspaceView,
     ingest_dir: &Path,
@@ -210,7 +211,7 @@ pub const MANIFEST_ONLY: &str = "written before workspace identities; records a 
 /// Why an archive's identity is not checkable: `metadata.json` records no identity at all.
 pub const NO_IDENTITY: &str = "metadata.json records no workspace identity";
 
-/// Verify an archive v2. The index check is the integrity result: every member matches
+/// Verify a `vxarchive/2` archive. The index check is the integrity result: every member matches
 /// `index.json`, and nothing is added or missing. The identity is then checked, mismatched, or
 /// not checkable with the reason: `package/` is re-hashed only under the algorithm the archive
 /// records, never an assumed one. The package digest is checked when the archive records one.
@@ -338,7 +339,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> (std::path::PathBuf, WorkspaceView, std::path::PathBuf) {
-        let tmp = std::env::temp_dir().join(format!("vxtel-v2-{name}-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("vxtel-archive-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let ws = tmp.join("ws");
         std::fs::create_dir_all(&ws).unwrap();
@@ -443,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn a_v2_archive_lists_checks_and_reads_back_its_records() {
+    fn an_archive_lists_checks_and_reads_back_its_records() {
         let (tmp, view, ingest) = fixture("roundtrip");
         let out = tmp.join("run.zip");
         let meta = collect(&view, &ingest, &out, None).unwrap();
@@ -461,7 +462,7 @@ mod tests {
         }
         assert!(
             !members.keys().any(|k| k.starts_with("ingest/")),
-            "v2 drops the raw ingest folder"
+            "the raw ingest folder is not archived"
         );
         let v = verify(&out).unwrap();
         assert!(v.ok, "{v:?}");

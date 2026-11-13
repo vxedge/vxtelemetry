@@ -3,7 +3,7 @@
 //!
 //! vxedged's live streams (`TelemetryService.StreamRecords`, `LogService.Follow`) send the lines
 //! of `records.jsonl` and `logs.jsonl` as they are written; its contract tests prove that half.
-//! This proves the other: archive v2 carries exactly those lines. `metrics/samples.jsonl.zst`
+//! This proves the other: the archive carries exactly those lines. `metrics/samples.jsonl.zst`
 //! keeps `records.jsonl`'s order; `logs/<entity>.jsonl.zst` keeps each entity's lines in the
 //! order `logs.jsonl` has them.
 
@@ -14,7 +14,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use vxtelemetry::records::Record;
 use vxtelemetry::workspace_view::{ScrapeTarget, WorkspaceView};
-use vxtelemetry::{archive_v2, ingest, logs};
+use vxtelemetry::{archive, ingest, logs};
 
 /// Serve `/metrics` to every scrape, each answer a little different.
 async fn exporter() -> String {
@@ -127,11 +127,11 @@ async fn an_archive_reads_back_what_the_ingest_wrote() {
 
     let view = WorkspaceView::load(&ws).unwrap();
     let out = root.join("run.zip");
-    archive_v2::collect(&view, &ingest_dir, &out, None).unwrap();
-    assert!(archive_v2::verify(&out).unwrap().ok);
+    archive::collect(&view, &ingest_dir, &out, None).unwrap();
+    assert!(archive::verify(&out).unwrap().ok);
 
     assert_eq!(
-        archive_v2::records(&out).unwrap(),
+        archive::records(&out).unwrap(),
         live_records,
         "samples and gaps, in the order written"
     );
@@ -141,7 +141,7 @@ async fn an_archive_reads_back_what_the_ingest_wrote() {
         Record::Log { entity, .. } => logs::member(entity),
         other => panic!("{other:?}"),
     });
-    assert_eq!(archive_v2::logs(&out).unwrap(), by_member);
+    assert_eq!(archive::logs(&out).unwrap(), by_member);
     let serial_lines: Vec<&str> = live_logs
         .iter()
         .filter_map(|r| match r {

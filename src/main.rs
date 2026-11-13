@@ -183,7 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     Some(metadata::resolve_image_digests(&record_images))
                 };
-                vxtelemetry::archive_v2::collect(&view, &ingest_dir, &out, image_digests)
+                vxtelemetry::archive::collect(&view, &ingest_dir, &out, image_digests)
             })
             .await??;
             println!("{}", serde_json::to_string_pretty(&metadata)?);
@@ -191,9 +191,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Cmd::Records { archive, logs } => {
             let recs = tokio::task::spawn_blocking(move || {
                 if logs {
-                    vxtelemetry::archive_v2::logs(&archive)
+                    vxtelemetry::archive::logs(&archive)
                 } else {
-                    vxtelemetry::archive_v2::records(&archive)
+                    vxtelemetry::archive::records(&archive)
                 }
             })
             .await??;
@@ -204,7 +204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Cmd::Verify { archive } => {
-            let v = tokio::task::spawn_blocking(move || vxtelemetry::archive_v2::verify(&archive))
+            let v = tokio::task::spawn_blocking(move || vxtelemetry::archive::verify(&archive))
                 .await??;
             println!("{}", serde_json::to_string_pretty(&v)?);
             eprintln!("vxtelemetry verify: {}", v.summary());

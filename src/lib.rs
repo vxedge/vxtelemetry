@@ -8,7 +8,7 @@
 //! CLI/daemon's job. See `workspace_view` for why it parses that itself
 //! rather than depending on `vxedge-core`.
 
-pub mod archive_v2;
+pub mod archive;
 pub mod identity;
 pub mod ingest;
 pub mod logs;
