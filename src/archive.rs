@@ -1,6 +1,6 @@
 //! **The results archive**, `vxarchive/2` (`ARCHITECTURE.md` §12, decisions X-7 and X-15): one
-//! zip per run, whose large record files are zstd-compressed members, readable by any zip reader and by Python's standard
-//! library from 3.14 (`zipfile` and `compression.zstd`).
+//! zip per run, whose large record files are zstd-compressed members, readable by any zip reader
+//! and by Python's standard library from 3.14 (`zipfile` and `compression.zstd`).
 //!
 //! ```text
 //! index.json                  schema vxarchive/2; every other member with its size and sha256
@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::TelemetryError;
-use crate::metadata::{ArchiveMetadata, DigestCheck, IdentityCheck, IdentityOutcome, Verification};
+use crate::metadata::ArchiveMetadata;
 use crate::records::Record;
 use crate::workspace_view::WorkspaceView;
 
@@ -198,6 +198,108 @@ fn open(archive: &Path) -> Result<(BTreeMap<String, Vec<u8>>, Index), TelemetryE
         )));
     }
     Ok((members, index))
+}
+
+/// What [`verify`] found: whether the members match the index, what could be
+/// said about the recorded workspace identity, and the package digest check when the archive
+/// records one.
+#[derive(Debug, Serialize)]
+pub struct Verification {
+    /// Every check passed, the identity check among them. False when the identity is not
+    /// checkable, even if nothing failed: see [`Verification::exit_code`].
+    pub ok: bool,
+    /// Every member matches `index.json`, and nothing is added or missing.
+    pub index: bool,
+    pub identity: IdentityCheck,
+    /// The identity algorithm the archive records; absent when it records none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub algorithm: Option<String>,
+    /// The recorded `workspace_sha256`; absent when the archive records none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recorded: Option<String>,
+    /// The identity the archived workspace re-hashes to; absent when it is not checkable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub computed: Option<String>,
+    /// Files under `package/`.
+    pub files: usize,
+    /// Present when `metadata.json` records `package.digest` (a `vxp/1` package).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub package_digest: Option<DigestCheck>,
+}
+
+/// The identity outcome: re-hashed and equal, re-hashed and different, or not checkable, with the
+/// reason. `verify` never assumes an algorithm the archive does not record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct IdentityCheck {
+    pub outcome: IdentityOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityOutcome {
+    Checked,
+    Mismatch,
+    NotCheckable,
+}
+
+/// `vxtelemetry verify`'s exit code when every check that could run passed but the identity is
+/// not checkable. Not 2, which is the usage-error code.
+pub const EXIT_NOT_CHECKABLE: i32 = 3;
+
+impl Verification {
+    fn package_ok(&self) -> bool {
+        self.package_digest
+            .as_ref()
+            .is_none_or(|d| d.recorded == d.computed)
+    }
+
+    /// 0: verified. 1: the index, the identity or the package digest does not match.
+    /// [`EXIT_NOT_CHECKABLE`]: nothing failed, but the identity is not checkable.
+    pub fn exit_code(&self) -> i32 {
+        if self.ok {
+            0
+        } else if self.index
+            && self.identity.outcome == IdentityOutcome::NotCheckable
+            && self.package_ok()
+        {
+            EXIT_NOT_CHECKABLE
+        } else {
+            1
+        }
+    }
+
+    /// One line for a person: what passed, what failed, or why the identity is not checkable.
+    pub fn summary(&self) -> String {
+        let mut parts = vec![if self.index {
+            "index OK".to_string()
+        } else {
+            "index MISMATCH".to_string()
+        }];
+        parts.push(match self.identity.outcome {
+            IdentityOutcome::Checked => "identity OK".to_string(),
+            IdentityOutcome::Mismatch => "identity MISMATCH".to_string(),
+            IdentityOutcome::NotCheckable => format!(
+                "identity not checkable: {}",
+                self.identity.reason.as_deref().unwrap_or("no reason given")
+            ),
+        });
+        if self.package_digest.is_some() {
+            parts.push(if self.package_ok() {
+                "package digest OK".into()
+            } else {
+                "package digest MISMATCH".into()
+            });
+        }
+        parts.join("; ")
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DigestCheck {
+    pub recorded: String,
+    pub computed: String,
 }
 
 /// Why an archive's identity is not checkable: it records an identity but no algorithm. Archives
@@ -626,7 +728,7 @@ id: e3
             (None, None)
         );
         assert!(v.recorded.is_some(), "the recorded identity is still shown");
-        assert_eq!(v.exit_code(), crate::metadata::EXIT_NOT_CHECKABLE);
+        assert_eq!(v.exit_code(), EXIT_NOT_CHECKABLE);
         assert_eq!(
             v.summary(),
             format!("index OK; identity not checkable: {NO_ALGORITHM}")
@@ -654,7 +756,7 @@ id: e3
         assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
         assert_eq!(v.identity.reason.as_deref(), Some(MANIFEST_ONLY));
         assert_eq!(v.recorded, None);
-        assert_eq!(v.exit_code(), crate::metadata::EXIT_NOT_CHECKABLE);
+        assert_eq!(v.exit_code(), EXIT_NOT_CHECKABLE);
 
         // A failed index is a failure whatever the identity says.
         let mut tampered = members_of(&old).unwrap();

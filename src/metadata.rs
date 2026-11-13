@@ -1,7 +1,6 @@
-//! What a results archive records and what checking one found: the reproducibility metadata
-//! (§13: experiment ID, workspace identity, tool version, and — when the caller opts in via
-//! `--record-image` — container image digests), and the outcome of `verify`. The archive itself
-//! is written and read by [`crate::archive`].
+//! What a results archive records: the reproducibility metadata (§13: experiment ID, workspace
+//! identity, tool version, and — when the caller opts in via `--record-image` — container image
+//! digests). The archive itself is written, read and verified by [`crate::archive`].
 
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -192,108 +191,6 @@ pub const TRIAL_FILE: &str = "trial.json";
 
 /// The file in the ingest folder the daemon writes the provenance of its tool binaries to.
 pub const TOOLS_FILE: &str = "tools.json";
-
-/// What [`crate::archive::verify`] found: whether the members match the index, what could be
-/// said about the recorded workspace identity, and the package digest check when the archive
-/// records one.
-#[derive(Debug, Serialize)]
-pub struct Verification {
-    /// Every check passed, the identity check among them. False when the identity is not
-    /// checkable, even if nothing failed: see [`Verification::exit_code`].
-    pub ok: bool,
-    /// Every member matches `index.json`, and nothing is added or missing.
-    pub index: bool,
-    pub identity: IdentityCheck,
-    /// The identity algorithm the archive records; absent when it records none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub algorithm: Option<String>,
-    /// The recorded `workspace_sha256`; absent when the archive records none.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recorded: Option<String>,
-    /// The identity the archived workspace re-hashes to; absent when it is not checkable.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub computed: Option<String>,
-    /// Files under `package/`.
-    pub files: usize,
-    /// Present when `metadata.json` records `package.digest` (a `vxp/1` package).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub package_digest: Option<DigestCheck>,
-}
-
-/// The identity outcome: re-hashed and equal, re-hashed and different, or not checkable, with the
-/// reason. `verify` never assumes an algorithm the archive does not record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct IdentityCheck {
-    pub outcome: IdentityOutcome,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum IdentityOutcome {
-    Checked,
-    Mismatch,
-    NotCheckable,
-}
-
-/// `vxtelemetry verify`'s exit code when every check that could run passed but the identity is
-/// not checkable. Not 2, which is the usage-error code.
-pub const EXIT_NOT_CHECKABLE: i32 = 3;
-
-impl Verification {
-    fn package_ok(&self) -> bool {
-        self.package_digest
-            .as_ref()
-            .is_none_or(|d| d.recorded == d.computed)
-    }
-
-    /// 0: verified. 1: the index, the identity or the package digest does not match.
-    /// [`EXIT_NOT_CHECKABLE`]: nothing failed, but the identity is not checkable.
-    pub fn exit_code(&self) -> i32 {
-        if self.ok {
-            0
-        } else if self.index
-            && self.identity.outcome == IdentityOutcome::NotCheckable
-            && self.package_ok()
-        {
-            EXIT_NOT_CHECKABLE
-        } else {
-            1
-        }
-    }
-
-    /// One line for a person: what passed, what failed, or why the identity is not checkable.
-    pub fn summary(&self) -> String {
-        let mut parts = vec![if self.index {
-            "index OK".to_string()
-        } else {
-            "index MISMATCH".to_string()
-        }];
-        parts.push(match self.identity.outcome {
-            IdentityOutcome::Checked => "identity OK".to_string(),
-            IdentityOutcome::Mismatch => "identity MISMATCH".to_string(),
-            IdentityOutcome::NotCheckable => format!(
-                "identity not checkable: {}",
-                self.identity.reason.as_deref().unwrap_or("no reason given")
-            ),
-        });
-        if self.package_digest.is_some() {
-            parts.push(if self.package_ok() {
-                "package digest OK".into()
-            } else {
-                "package digest MISMATCH".into()
-            });
-        }
-        parts.join("; ")
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct DigestCheck {
-    pub recorded: String,
-    pub computed: String,
-}
 
 #[cfg(test)]
 mod tests {
