@@ -6,6 +6,14 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-13
+
+`vxarchive/2` only (decision X-30). `collect` writes no other format and drops
+`--archive-version`; `verify` and `records` refuse a `vxarchive/1` archive with the current format
+named; a legacy `<name>.vxp` descriptor is refused. The republished frozen sets (Zenodo 2026-11-v2)
+verify exactly as with 0.7.1. Pair it with vxedge 0.26.0: vxedged 0.25.0 and earlier pass
+`--archive-version`, which this release rejects.
+
 ### Removed
 
 - **Breaking:** `vxarchive/1` (owner decision X-30: no format versions or fallbacks while there
