@@ -828,8 +828,8 @@ id: e3
         for (rel, body) in [
             ("main.yaml", "kind: experiment\nid: exp-sv\n"),
             (
-                "exp-sv.vxp",
-                "id: exp-sv\nversion: 0.1.0\nentry: main.yaml\n",
+                "vxp.yaml",
+                "schema: vxp/1\nid: vxedge/exp-sv\nversion: 0.1.0\nentry: main.yaml\n",
             ),
             ("parts/local-thing", "payload\n"),
             ("scripts/run.sh", "#!/usr/bin/env bash\n"),
@@ -859,10 +859,10 @@ id: e3
         assert_eq!(
             names,
             [
-                "exp-sv.vxp",
                 "main.yaml",
                 "parts/local-thing",
-                "scripts/run.sh"
+                "scripts/run.sh",
+                "vxp.yaml"
             ]
         );
         assert_eq!(

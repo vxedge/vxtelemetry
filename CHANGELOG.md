@@ -22,6 +22,8 @@ All notable changes to this repo are documented here. Format follows
   - Unchanged: a `vxarchive/2` archive that records an identity but no algorithm, or only a
     `manifest_sha256`, still verifies as before: index checked, identity `not_checkable` with
     the reason, exit 3.
+- **Breaking:** a workspace with a legacy `<name>.vxp` descriptor is refused, as vxedge refuses
+  it (decision X-30). The descriptor is `vxp.yaml` with `schema: vxp/1`.
 - The library's `archive_v2` module is now `archive`, and the metadata it records is in
   `metadata`; `archive_v2::is_v2` is gone.
 
