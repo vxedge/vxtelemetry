@@ -49,6 +49,10 @@ pub struct ArchiveMetadata {
     /// archives from before it was recorded, and where the kernel cannot be read.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kernel: Option<Kernel>,
+    /// How the gateway shaped the uplink (`ARCHITECTURE.md` §6.0.3): `gate-schedule` under
+    /// `network.shaping`, `htb` otherwise. A gate schedule gives the uplink no line rate, so
+    /// results from the two are compared knowing which is which.
+    pub shaping: String,
     /// The trial this archive is, as the campaign runner wrote it to the ingest folder's
     /// `trial.json`: campaign id, trial id, arm, repetition, parameter values. Absent outside a
     /// campaign. Recorded as given, so the runner owns its shape.
@@ -181,6 +185,7 @@ pub(crate) fn metadata_for(
         ingest: ingest_stats,
         image_digests,
         kernel: Kernel::probe(),
+        shaping: workspace.shaping.clone(),
         trial,
         tools,
     }
@@ -242,6 +247,7 @@ mod tests {
             ingest: None,
             image_digests: None,
             kernel: None,
+            shaping: "htb".into(),
             trial: None,
             tools: None,
         };

@@ -43,6 +43,9 @@ pub struct WorkspaceView {
     identity: String,
     telemetry: Option<TelemetryBlock>,
     results: Option<ResultsBlock>,
+    /// How the gateway shapes the uplink: `network.shaping.kind` (`gate-schedule`), or `htb`
+    /// when the experiment declares no `shaping` and the HTB tree shapes it.
+    pub shaping: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, serde::Serialize)]
@@ -71,7 +74,7 @@ struct Header {
     kind: String,
 }
 
-/// The `kind: experiment` document, reduced to the two blocks telemetry reads.
+/// The `kind: experiment` document, reduced to the blocks telemetry reads.
 #[derive(Debug, Deserialize)]
 struct ExperimentDocView {
     id: String,
@@ -79,7 +82,24 @@ struct ExperimentDocView {
     telemetry: Option<TelemetryBlock>,
     #[serde(default)]
     results: Option<ResultsBlock>,
+    #[serde(default)]
+    network: Option<NetworkBlock>,
 }
+
+#[derive(Debug, Default, Deserialize)]
+struct NetworkBlock {
+    #[serde(default)]
+    shaping: Option<ShapingBlock>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct ShapingBlock {
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+/// The shaping an archive records when the experiment declares no `network.shaping`.
+pub const SHAPING_HTB: &str = "htb";
 
 #[derive(Debug, Default, Deserialize)]
 pub struct TelemetryBlock {
@@ -210,6 +230,11 @@ impl WorkspaceView {
             identity,
             telemetry: experiment.telemetry,
             results: experiment.results,
+            shaping: experiment
+                .network
+                .and_then(|n| n.shaping)
+                .and_then(|s| s.kind)
+                .unwrap_or_else(|| SHAPING_HTB.to_string()),
         })
     }
 
@@ -363,6 +388,25 @@ results:
         assert!(recorded.get("locked").is_none(), "never guessed");
         assert!(recorded.get("schema").is_none());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn the_shaping_kind_is_read_and_htb_is_the_default() {
+        let htb = workspace(
+            "shaping-htb",
+            &[("main.yaml", MAIN), ("vehicle.yaml", VEHICLE)],
+        );
+        assert_eq!(WorkspaceView::load(&htb).unwrap().shaping, "htb");
+        let gated = MAIN.replace(
+            "    - { id: adas, mode: vlan, vlan: 101 }\n",
+            "    - { id: adas, mode: vlan, vlan: 101 }\n  shaping:\n    kind: gate-schedule\n    \
+             windows:\n      - { id: adas, open: [adas, default], duration_us: 10000 }\n",
+        );
+        let root = workspace(
+            "shaping-gate",
+            &[("main.yaml", &gated), ("vehicle.yaml", VEHICLE)],
+        );
+        assert_eq!(WorkspaceView::load(&root).unwrap().shaping, "gate-schedule");
     }
 
     #[test]
