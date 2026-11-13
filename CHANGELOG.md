@@ -6,6 +6,25 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** `vxarchive/1` (owner decision X-30: no format versions or fallbacks while there
+  are no outside users; the frozen result sets are republished in `vxarchive/2`, Zenodo
+  2026-11-v2).
+  - `collect` writes `vxarchive/2` only. The `--archive-version` option and the
+    `VXTELEMETRY_ARCHIVE_VERSION` variable are gone; passing `--archive-version` is a usage
+    error (exit 2).
+  - `ingest` no longer writes the `vxarchive/1` files to the ingest folder: `samples.jsonl` and
+    the raw scrapes under `raw/<target>/<ts>.prom`. It writes `records.jsonl` as before.
+  - `verify`, `records` and `records --logs` refuse a `vxarchive/1` archive (no `index.json`)
+    with an error naming the current format, and exit 1. They no longer re-hash `workspace/` or
+    read `ingest/samples.jsonl`.
+  - Unchanged: a `vxarchive/2` archive that records an identity but no algorithm, or only a
+    `manifest_sha256`, still verifies as before: index checked, identity `not_checkable` with
+    the reason, exit 3.
+- The library's `archive_v2` module is now `archive`, and the metadata it records is in
+  `metadata`; `archive_v2::is_v2` is gone.
+
 ## [0.7.1] - 2026-11-13
 
 `verify` tells a checked identity, a mismatch and an identity it cannot check apart, and never
