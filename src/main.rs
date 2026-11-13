@@ -11,7 +11,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Duration;
 use vxtelemetry::workspace_view::WorkspaceView;
-use vxtelemetry::{archive, ingest, sample};
+use vxtelemetry::{ingest, metadata, sample};
 
 #[derive(Parser)]
 #[command(
@@ -181,7 +181,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let image_digests = if record_images.is_empty() {
                     None
                 } else {
-                    Some(archive::resolve_image_digests(&record_images))
+                    Some(metadata::resolve_image_digests(&record_images))
                 };
                 vxtelemetry::archive_v2::collect(&view, &ingest_dir, &out, image_digests)
             })

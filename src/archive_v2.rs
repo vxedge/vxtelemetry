@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Digest;
 
 use crate::TelemetryError;
-use crate::archive::{ArchiveMetadata, DigestCheck, IdentityCheck, IdentityOutcome, Verification};
+use crate::metadata::{ArchiveMetadata, DigestCheck, IdentityCheck, IdentityOutcome, Verification};
 use crate::records::Record;
 use crate::workspace_view::WorkspaceView;
 
@@ -69,7 +69,7 @@ pub fn collect(
     out: &Path,
     image_digests: Option<BTreeMap<String, String>>,
 ) -> Result<ArchiveMetadata, TelemetryError> {
-    let metadata = crate::archive::metadata_for(workspace, ingest_dir, image_digests);
+    let metadata = crate::metadata::metadata_for(workspace, ingest_dir, image_digests);
 
     let mut members: Vec<(String, Vec<u8>)> = Vec::new();
     members.push((
@@ -387,7 +387,7 @@ mod tests {
     fn a_campaign_trial_records_its_identity_and_late_phases() {
         let (tmp, view, ingest) = fixture("trial");
         std::fs::write(
-            ingest.join(crate::archive::TRIAL_FILE),
+            ingest.join(crate::metadata::TRIAL_FILE),
             r#"{"campaign_id":"c1","trial_id":"r1-idle","arm":"idle","repetition":1,"parameters":{"load_mbps":0}}"#,
         )
         .unwrap();
@@ -416,7 +416,7 @@ mod tests {
     fn the_daemons_tools_are_recorded_as_given() {
         let (tmp, view, ingest) = fixture("tools");
         let tools = r#"[{"name":"vxprobe","path":"/opt/vx/vxprobe","version":"0.2.2","sha256":"ab","profile":"release"}]"#;
-        std::fs::write(ingest.join(crate::archive::TOOLS_FILE), tools).unwrap();
+        std::fs::write(ingest.join(crate::metadata::TOOLS_FILE), tools).unwrap();
         let out = tmp.join("tools.zip");
         collect(&view, &ingest, &out, None).unwrap();
         let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
@@ -433,7 +433,7 @@ mod tests {
 
         // Anything but a list is not the daemon's tools, and is left out.
         std::fs::write(
-            ingest.join(crate::archive::TOOLS_FILE),
+            ingest.join(crate::metadata::TOOLS_FILE),
             r#"{"vxprobe":"0.2.2"}"#,
         )
         .unwrap();
@@ -625,7 +625,7 @@ id: e3
             (None, None)
         );
         assert!(v.recorded.is_some(), "the recorded identity is still shown");
-        assert_eq!(v.exit_code(), crate::archive::EXIT_NOT_CHECKABLE);
+        assert_eq!(v.exit_code(), crate::metadata::EXIT_NOT_CHECKABLE);
         assert_eq!(
             v.summary(),
             format!("index OK; identity not checkable: {NO_ALGORITHM}")
@@ -653,7 +653,7 @@ id: e3
         assert_eq!(v.identity.outcome, IdentityOutcome::NotCheckable);
         assert_eq!(v.identity.reason.as_deref(), Some(MANIFEST_ONLY));
         assert_eq!(v.recorded, None);
-        assert_eq!(v.exit_code(), crate::archive::EXIT_NOT_CHECKABLE);
+        assert_eq!(v.exit_code(), crate::metadata::EXIT_NOT_CHECKABLE);
 
         // A failed index is a failure whatever the identity says.
         let mut tampered = members_of(&old).unwrap();
