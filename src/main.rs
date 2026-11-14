@@ -73,6 +73,10 @@ enum Cmd {
         /// vxtelemetry without this option still collects.
         #[arg(long, env = "VXTELEMETRY_PACKAGE_LOCKED")]
         package_locked: Option<bool>,
+        /// The instance slot of the run being archived, recorded as `instance`. Left out, nothing
+        /// is recorded. The daemon passes it in the environment, as it does `package_locked`.
+        #[arg(long, env = "VXTELEMETRY_INSTANCE")]
+        instance: Option<String>,
     },
     /// Check a `vxarchive/2` archive: every member against `index.json`; then the identity:
     /// `package/` re-hashed under the recorded algorithm and compared with the recorded
@@ -172,9 +176,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             out,
             record_images,
             package_locked,
+            instance,
         } => {
             let metadata = tokio::task::spawn_blocking(move || {
                 let mut view = WorkspaceView::load(&workspace)?;
+                view.instance = instance.filter(|s| !s.is_empty());
                 if let Some(p) = view.package.as_mut().filter(|p| p.digest.is_some()) {
                     p.locked = package_locked;
                 }

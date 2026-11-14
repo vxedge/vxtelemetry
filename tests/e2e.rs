@@ -100,6 +100,14 @@ async fn ingest_then_collect_roundtrip() {
     assert_eq!(metadata.package.as_ref().unwrap().id, "vxedge/exp-e2e");
     assert!(metadata.package.as_ref().unwrap().digest.is_some());
     assert!(metadata.image_digests.is_none());
+    assert!(metadata.instance.is_none(), "no slot passed, none recorded");
+
+    // The daemon passes the run's slot; the archive records it.
+    let mut slotted = WorkspaceView::load(&ws_dir).unwrap();
+    slotted.instance = Some("1".into());
+    let out_slot = tmp.join("slot.zip");
+    let m = archive::collect(&slotted, &ingest_dir, &out_slot, None).unwrap();
+    assert_eq!(m.instance.as_deref(), Some("1"));
 
     let mut zip = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
     let names: Vec<String> = (0..zip.len())
@@ -158,4 +166,45 @@ async fn ingest_then_collect_roundtrip() {
     assert!(meta_json2.contains("\"vx5g-core\": \"sha256:feedface\""));
 
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// A target with a path is scraped at `<path>/metrics`: the daemon serves each run's exporter at
+/// `/runs/<slot>/metrics`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_target_with_a_path_is_scraped_under_it() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut buf = [0u8; 512];
+                let n = stream.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let resp = if req.starts_with("GET /runs/1/metrics ") {
+                    let body = "vxedge_run_up 1\n";
+                    format!(
+                        "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                        .to_string()
+                };
+                let _ = stream.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    let body = vxtelemetry::scrape::fetch_metrics(&format!("{addr}/runs/1"))
+        .await
+        .unwrap();
+    assert_eq!(body, "vxedge_run_up 1\n");
+    assert!(
+        vxtelemetry::scrape::fetch_metrics(&addr.to_string())
+            .await
+            .is_err(),
+        "plain /metrics is not this run's"
+    );
 }
