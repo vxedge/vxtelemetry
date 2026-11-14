@@ -6,6 +6,15 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+### Added
+
+- `collect` records the run's instance slot as `instance` in `metadata.json`, from `--instance` or
+  `VXTELEMETRY_INSTANCE`, which the daemon sets (`ARCHITECTURE.md` §6.0.5). Archives of two
+  concurrent runs of one package stay apart. Absent when none is passed.
+- A scrape target may carry a path, `host:port/path`, scraped at `/<path>/metrics`. The daemon
+  serves each run's exporter at `/runs/<slot>/metrics`, so a run's archive holds only its own
+  series. A target without a path is scraped at `/metrics` as before.
+
 ## [0.10.0] - 2026-11-14
 
 `metadata.json` records the gateway's gPTP time sync when the experiment declares it, so an archive says

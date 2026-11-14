@@ -48,6 +48,9 @@ pub struct WorkspaceView {
     pub shaping: String,
     /// The gateway's time sync, `network.time_sync`, when the experiment declares one.
     pub time_sync: Option<TimeSync>,
+    /// The instance slot of the run being archived, as the daemon passes it. Never read from the
+    /// workspace: two runs of one package differ only in it.
+    pub instance: Option<String>,
 }
 
 /// What an archive records about `network.time_sync` (`ARCHITECTURE.md` §6.0.3). vxedge runs every
@@ -268,6 +271,7 @@ impl WorkspaceView {
                     timestamping: "software",
                     servo: "free-running",
                 }),
+            instance: None,
         })
     }
 

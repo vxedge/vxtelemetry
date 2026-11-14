@@ -57,6 +57,11 @@ pub struct ArchiveMetadata {
     /// followers, and that timestamps are software and the followers run free. Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub time_sync: Option<crate::workspace_view::TimeSync>,
+    /// The instance slot of the run this archive is from (`ARCHITECTURE.md` §6.0.5), as the
+    /// daemon passed it, so archives of two concurrent runs of one package stay apart. Absent when
+    /// the daemon passed none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<String>,
     /// The trial this archive is, as the campaign runner wrote it to the ingest folder's
     /// `trial.json`: campaign id, trial id, arm, repetition, parameter values. Absent outside a
     /// campaign. Recorded as given, so the runner owns its shape.
@@ -190,6 +195,7 @@ pub(crate) fn metadata_for(
         image_digests,
         kernel: Kernel::probe(),
         shaping: workspace.shaping.clone(),
+        instance: workspace.instance.clone(),
         time_sync: workspace.time_sync.clone(),
         trial,
         tools,
@@ -253,6 +259,7 @@ mod tests {
             image_digests: None,
             kernel: None,
             shaping: "htb".into(),
+            instance: None,
             time_sync: None,
             trial: None,
             tools: None,
