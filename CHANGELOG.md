@@ -6,6 +6,13 @@ All notable changes to this repo are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-16
+
+`collect` keeps the archives of concurrent runs apart: it records the run's instance slot in `metadata.json`
+and scrapes a target's path, so it reads the run's own exporter page. Pairs with vxedge 0.31.0, which runs
+several runs on one host and serves each run's metrics at `/runs/<slot>/metrics`. zstd moves to 0.14 and zip to
+9.5.1; the archive format is unchanged.
+
 ### Added
 
 - `collect` records the run's instance slot as `instance` in `metadata.json`, from `--instance` or
