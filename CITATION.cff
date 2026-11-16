@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software or its results, please cite it as below."
-title: "vxtelemetry: telemetry ingestion and results archiving for an all-software SDV testbed"
+title: "vxtelemetry: telemetry ingestion and results archiving for vxedge experiments"
 type: software
 authors:
   - family-names: "Djaafri"
