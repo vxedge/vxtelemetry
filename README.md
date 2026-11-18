@@ -6,7 +6,7 @@ Telemetry ingestion, Prometheus export, and reproducible results archiving for v
 [![CI](https://github.com/vxedge/vxtelemetry/actions/workflows/ci.yml/badge.svg)](https://github.com/vxedge/vxtelemetry/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/tag/vxedge/vxtelemetry?label=release)](https://github.com/vxedge/vxtelemetry/tags)
 
-vxedge is an open, all-software testbed for mapping 5G network slices onto zonal and central software-defined-vehicle (SDV) E/E architectures on a single machine. Every published number ships with the manifest and image digests that produced it.
+`vxtelemetry` is the telemetry and results-archiving service of vxedge, a virtual vehicle with environmental parity, for packaged, measured SDV experiments. Every result ships with the manifest and image digests that produced it.
 
 ## Commands
 
